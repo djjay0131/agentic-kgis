@@ -1,6 +1,6 @@
 # ADR-0002: Contracts live in agentic-kgis as kg_contracts
 
-Status: Accepted
+Status: Accepted (amended 2026-07-10)
 Date: 2026-07-08
 
 ## Context
@@ -55,9 +55,25 @@ migration.
 - [x] Implementation
 - [x] Documentation
 
+## Amended 2026-07-10
+
+Per the approved disposition of external review PR #1 (item R2, and A13
+with owner confirmation): `agentic-kgis` ships **three** packages —
+`kg_contracts`, `kgis`, and `kg_eval` (ADR-0009) — in one distribution.
+The two-repo layout stands: `agentic-kgcs` still ships only `kgcs` and
+depends only on `kg_contracts`. The feedback's four-package module
+boundaries (contracts / ingestion / curation / eval) are accepted as
+package boundaries, not as repos; extraction into more repos remains the
+documented escape hatch. `kg_contracts` v2 is written fresh with
+`vttsi-contracts`, `ts-kg`, and `vttsi-evidence` as reference reading —
+no code vendoring (owner decision, 2026-07-10).
+
 ## Related Documents
 
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §2.5, §5
+- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §2.5, §4, §5, §10.1 (v2)
+- `docs/ai/chatgpt-feedback-2026-07.md` (Response 2 §5, §12)
+- `docs/ai/chatgpt-feedback-disposition.md` (R2, A13, A18/Phase 0)
+- PR #1 (external design review capture + disposition)
 
 ## Supersedes
 

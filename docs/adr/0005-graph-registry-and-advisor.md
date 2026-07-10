@@ -1,6 +1,6 @@
 # ADR-0005: Graph registry + extend-vs-new advisor, human-gated with automation path
 
-Status: Accepted
+Status: Accepted (amended 2026-07-10)
 Date: 2026-07-08
 
 ## Context
@@ -65,10 +65,36 @@ orphan decisions by construction.
 - [x] AI architecture
 - [x] Implementation
 
+## Amended 2026-07-10
+
+Per the approved disposition of external review PR #1 (A15, D3). The
+registry, human gate, lineage recording, and config-change automation path
+are unchanged. The advisor's decision model is upgraded:
+
+- **Twelve factors replace the four.** Domain overlap alone is explicitly
+  insufficient. The set: (1) shared identity value, (2) ontology
+  compatibility, (3) assertion and evidence semantics, (4) temporal-model
+  compatibility, (5) tenancy/privacy/access, (6) lifecycle and retention,
+  (7) workload and backend compatibility, (8) governance and stewardship,
+  (9) failure/blast-radius requirements, (10) cross-domain traversal
+  value, (11) computational-model coupling, (12) rebuild and deletion
+  boundaries.
+- **Four outcome architectures replace the binary extend-vs-new:**
+  extend the same logical+physical graph / shared logical graph with
+  separate physical partitions / separate graphs with a shared identity
+  registry / fully isolated graphs with explicit cross-graph mappings.
+- **v1 automated scoring covers factors 1, 2, 5, 6, and 11**; the
+  remaining factors appear as a structured human checklist inside every
+  `Recommendation`. A human adjudicates every recommendation in v1 anyway,
+  so the full factor set is preserved without speculative scorers.
+
 ## Related Documents
 
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §8
+- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §8 (v2)
 - construction-platform ADR-012 (infrastructure layer)
+- `docs/ai/chatgpt-feedback-2026-07.md` (Response 1 §4, Response 2 §10)
+- `docs/ai/chatgpt-feedback-disposition.md` (A15, D3)
+- PR #1 (external design review capture + disposition)
 
 ## Supersedes
 
