@@ -391,7 +391,7 @@ git commit -m "feat(contracts): ULID helper, PolicyContext stub, universal trace
 
 ### Task 4: kg_contracts.evidence — first-class evidence contract
 
-*Phase-0 lesson (vttsi-evidence):* absence has distinct meanings ("no source queried" / "source omitted it" / "source unavailable" / "sources contradict" / "source states unknown"); representing availability explicitly prevents an LLM reading graph context from turning absent data into an inferred fact. Providers record absence/error instead of throwing failures upward.
+*Phase-0 lesson (vttsi-evidence):* absence has distinct meanings ("no source queried" / "source omitted it" / "source unavailable" / "sources contradict" / "source states unknown"); representing availability explicitly prevents an LLM reading graph context from turning absent data into an inferred fact. Providers record absence/error instead of throwing failures upward. Two further pitfalls worth encoding: (1) vttsi-evidence uses **deterministic, citable evidence IDs** (`source:key@window`) so re-collection is idempotent — support caller-supplied IDs and treat the random default as a fallback for one-off evidence; (2) it ships **safe constructor helpers** (`make_evidence` / `absent()` / `error()`) so an invalid availability combination is unrepresentable at call sites, not just rejected by a validator.
 
 **Files:**
 - Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/evidence.py`
@@ -407,6 +407,7 @@ git commit -m "feat(contracts): ULID helper, PolicyContext stub, universal trace
   - `Evidence(evidence_id: str = "ev_" + ulid default, source_type: str, source_locator: str, observed_at: datetime, valid_time: ValidPeriod | None, availability: EvidenceAvailability, absence_reason: AbsenceReason | None, payload_hash: str | None, content: str | None, error: str | None, provenance: Provenance)` — cross-field rules: `PRESENT` requires `content` or `payload_hash` and forbids `absence_reason`/`error`; `ABSENT` requires `absence_reason`; `ERROR` requires `error`
   - `EvidenceRelationship` StrEnum: `SUPPORTS`, `CONTRADICTS`, `DERIVED_FROM`, `CONTEXTUALIZES`
   - `EvidenceRef(evidence_id: str, relationship: EvidenceRelationship)` — how a candidate/assertion cites evidence
+  - Constructor helpers (vttsi-evidence pattern): `present_evidence(...)`, `absent_evidence(..., reason: AbsenceReason)`, `error_evidence(..., error: str)` — each fills the availability field and only accepts the arguments valid for that state; all accept an optional caller-supplied deterministic `evidence_id`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -486,6 +487,21 @@ def test_evidence_ref_relationships():
     assert {v.value for v in EvidenceRelationship} == {
         "SUPPORTS", "CONTRADICTS", "DERIVED_FROM", "CONTEXTUALIZES"
     }
+
+
+def test_constructor_helpers_and_deterministic_ids():
+    from kg_contracts.evidence import absent_evidence, present_evidence
+
+    e = present_evidence(
+        evidence_id="openalex:W123@2026-07",  # caller-supplied, citable
+        source_type="api", source_locator="openalex/W123",
+        observed_at=NOW, content="...", provenance=PROV,
+    )
+    assert e.evidence_id == "openalex:W123@2026-07"
+    a = absent_evidence(source_type="api", source_locator="openalex/W999",
+                        observed_at=NOW, reason=AbsenceReason.SOURCE_OMITTED,
+                        provenance=PROV)
+    assert a.availability is EvidenceAvailability.ABSENT
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -500,7 +516,7 @@ All models frozen; `evidence_id` uses `Field(default_factory=lambda: "ev_" + new
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/contracts/test_evidence.py -v`
-Expected: 6 passed
+Expected: 7 passed
 
 - [ ] **Step 5: Commit**
 
