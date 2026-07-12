@@ -793,3 +793,464 @@ git commit -m "feat(contracts): version changes with mandatory compatibility cla
 ```
 
 ---
+
+### Task 8: kg_contracts.candidates — CandidateScores + CandidateEnvelope
+
+**A single `confidence` float is banned** (spec §5.2, disposition A2). The score set keeps orthogonal signals apart: an exact database import is not proof the database's fact is correct.
+
+**Files:**
+- Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/candidates.py`
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_candidate_envelope.py`
+
+**Interfaces:**
+- Consumes: `new_ulid`, `new_trace_id` (Task 3), `EvidenceRef` (Task 4), `CONTRACT_VERSION` (Task 7)
+- Produces (all frozen, `extra="forbid"` — the forbid is load-bearing: it makes `confidence=` a hard error):
+  - `CandidateScores(extraction_confidence: float, source_reliability: float, identity_confidence: float | None = None, assertion_confidence: float | None = None, corroboration_score: float | None = None, policy_risk: float = 0.0)` — all bounds `0.0..1.0`. `extraction_confidence` (did we read the source correctly?) and `source_reliability` (how trustworthy is this source historically?) are **required**: every producer must state both. The optional scores start unknown and are filled by curation (Plans 3/5). `policy_risk` is the consequence class of acting on the candidate
+  - `SourceCoordinates(source_type: str, locator: str, fragment: str | None = None)` — stable locator into the source (row id, document URI, page/span); the primary idempotency anchor (spec §5.8)
+  - `Representation(kind: Literal["text", "vector"], text: str | None = None, vector: tuple[float, ...] | None = None, model: str | None = None)` — exactly one of text/vector per kind
+  - `CandidateEnvelope` — shared base class of all nine variants: `candidate_id: str` (default `"cand_" + ulid`), `graph_id: str`, `candidate_kind: str` (overridden per variant as a `Literal` discriminator), `producer: str`, `producer_run_id: str`, `contract_version: str = CONTRACT_VERSION`, `ontology_version: str`, `evidence_refs: tuple[EvidenceRef, ...] = ()`, `source_coordinates: SourceCoordinates`, `semantic_key: str` (min_length=1 — the idempotency key: stable semantic identity of the proposed fact, NOT a hash; spec §5.8), `content_hash: str | None = None` (supplementary signal only), `representations: dict[str, Representation] = {}` (**named** feature views — never a single generic embedding field), `scores: CandidateScores`, `trace_id: str` (default `new_trace_id()`), `created_at: datetime` (default now, UTC)
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/contracts/test_candidate_envelope.py`:
+```python
+import pytest
+from pydantic import ValidationError
+
+from kg_contracts.candidates import (
+    CandidateEnvelope,
+    CandidateScores,
+    Representation,
+    SourceCoordinates,
+)
+from kg_contracts.versioning import CONTRACT_VERSION
+
+SCORES = CandidateScores(extraction_confidence=0.9, source_reliability=0.8)
+COORDS = SourceCoordinates(source_type="postgres", locator="intersections/101")
+
+
+def _envelope(**overrides: object) -> CandidateEnvelope:
+    base: dict[str, object] = dict(
+        graph_id="traffic",
+        candidate_kind="entity",
+        producer="structured-sync",
+        producer_run_id="run-1",
+        ontology_version="1",
+        source_coordinates=COORDS,
+        semantic_key="traffic/intersection/101",
+        scores=SCORES,
+    )
+    base.update(overrides)
+    return CandidateEnvelope(**base)  # type: ignore[arg-type]
+
+
+def test_envelope_defaults():
+    e = _envelope()
+    assert e.candidate_id.startswith("cand_")
+    assert e.trace_id.startswith("trace_")
+    assert e.contract_version == CONTRACT_VERSION
+    assert e.created_at.tzinfo is not None
+
+
+def test_single_confidence_is_banned():
+    with pytest.raises(ValidationError):
+        _envelope(confidence=0.9)  # extra="forbid" makes this a hard error
+    with pytest.raises(ValidationError):
+        CandidateScores(confidence=0.9)  # type: ignore[call-arg]
+
+
+def test_scores_require_extraction_and_source_reliability():
+    with pytest.raises(ValidationError):
+        CandidateScores(extraction_confidence=0.9)  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        CandidateScores(extraction_confidence=1.2, source_reliability=0.5)
+
+
+def test_optional_scores_start_unknown():
+    assert SCORES.identity_confidence is None
+    assert SCORES.assertion_confidence is None
+    assert SCORES.policy_risk == 0.0
+
+
+def test_semantic_key_required_nonempty():
+    with pytest.raises(ValidationError):
+        _envelope(semantic_key="")
+
+
+def test_representations_are_named_views():
+    e = _envelope(representations={
+        "raw_statement": Representation(kind="text", text="Player X bats left"),
+        "statement_embedding": Representation(
+            kind="vector", vector=(0.1, 0.2), model="embed-v3"),
+    })
+    assert set(e.representations) == {"raw_statement", "statement_embedding"}
+
+
+def test_representation_exactly_one_payload():
+    with pytest.raises(ValidationError, match="vector"):
+        Representation(kind="vector", text="oops")
+```
+
+- [ ] **Step 2: Run tests to verify they fail** — Expected: `ModuleNotFoundError: No module named 'kg_contracts.candidates'`
+
+- [ ] **Step 3: Implement `candidates.py` (envelope portion)**
+
+`model_config = ConfigDict(frozen=True, extra="forbid")` on every model in this module. `CandidateEnvelope.candidate_kind: str` here; variants (Tasks 9–10) narrow it to a `Literal`. `created_at` default factory `datetime.now(UTC)`. Module docstring: nine-variant union per spec §5.2/ADR-0004-as-amended; single confidence banned; envelope fields quoted from spec.
+
+- [ ] **Step 4: Run tests to verify they pass** — Expected: 7 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/kg_contracts/candidates.py tests/contracts/test_candidate_envelope.py
+git commit -m "feat(contracts): CandidateScores + CandidateEnvelope — single confidence banned (spec 5.2)"
+```
+
+---
+
+### Task 9: Implemented candidate variants — entity, relation, attribute-assertion, artifact
+
+These four get **full validation + tests** (disposition D2): they are what v1 pipelines (Plans 2–4) implement.
+
+**Files:**
+- Modify: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/candidates.py` (append)
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_candidate_variants.py`
+
+**Interfaces:**
+- Consumes: `CandidateEnvelope` (Task 8), `EntityRef`, `is_identity_id` (Task 5), `ValidPeriod` (Task 4), `Derivation` (Task 6)
+- Produces (each subclasses `CandidateEnvelope`; shared alias type `SubjectRef = EntityRef | str` where a `str` must satisfy `is_identity_id` — enforced by one reusable validator):
+  - `EntityCandidate(candidate_kind: Literal["entity"], entity_type: str, aliases: tuple[EntityRef, ...], display_name: str | None = None, properties: dict[str, object] = {})` — entity_type PascalCase; `aliases` non-empty; every alias's `entity_type` must equal the candidate's `entity_type` (a proposed identity is *made of* its namespaced aliases — there is no bare-ID fallback)
+  - `RelationCandidate(candidate_kind: Literal["relation"], relation_type: str, subject: SubjectRef, object: SubjectRef, properties: dict[str, object] = {}, valid_period: ValidPeriod | None = None)` — relation_type UPPER_SNAKE `^[A-Z][A-Z0-9_]*$`
+  - `AttributeAssertionCandidate(candidate_kind: Literal["attribute_assertion"], subject: SubjectRef, attribute: str, value: object, valid_period: ValidPeriod | None = None)` — attribute `min_length=1`; a proposed **fact about an entity**, bitemporal-ready via valid_period (transaction time is assigned by the ledger, Plan 2)
+  - `ArtifactCandidate(candidate_kind: Literal["artifact"], artifact_type: str, artifact_hash: str, source_uri: str, media_type: str | None = None, derivation: Derivation | None = None)` — a produced object; **an artifact is not a fact about the world** (spec §5.2); artifact_hash and source_uri required non-empty
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/contracts/test_candidate_variants.py`:
+```python
+import pytest
+from pydantic import ValidationError
+
+from kg_contracts.candidates import (
+    ArtifactCandidate,
+    AttributeAssertionCandidate,
+    CandidateScores,
+    EntityCandidate,
+    RelationCandidate,
+    SourceCoordinates,
+)
+from kg_contracts.identity import EntityRef, new_identity_id
+
+SCORES = CandidateScores(extraction_confidence=0.9, source_reliability=0.8)
+COORDS = SourceCoordinates(source_type="document", locator="doc-1#p3")
+ENV = dict(graph_id="baseball", producer="llm-extract", producer_run_id="r1",
+           ontology_version="1", source_coordinates=COORDS, scores=SCORES)
+PLAYER = EntityRef(entity_type="Player", namespace="usssa", key="12345")
+
+
+def test_entity_candidate_valid():
+    c = EntityCandidate(**ENV, semantic_key="baseball/player/usssa:12345",
+                        entity_type="Player", aliases=(PLAYER,))
+    assert c.candidate_kind == "entity"
+
+
+def test_entity_candidate_requires_aliases():
+    with pytest.raises(ValidationError, match="alias"):
+        EntityCandidate(**ENV, semantic_key="k", entity_type="Player", aliases=())
+
+
+def test_entity_candidate_alias_type_must_match():
+    with pytest.raises(ValidationError, match="entity_type"):
+        EntityCandidate(**ENV, semantic_key="k", entity_type="Coach",
+                        aliases=(PLAYER,))
+
+
+def test_relation_candidate_valid_with_ref_and_identity_subject():
+    iid = new_identity_id("baseball")
+    c = RelationCandidate(**ENV, semantic_key="k", relation_type="PLAYS_FOR",
+                          subject=PLAYER, object=iid)
+    assert c.candidate_kind == "relation"
+
+
+def test_relation_candidate_rejects_bad_type_and_bad_subject():
+    with pytest.raises(ValidationError, match="UPPER_SNAKE"):
+        RelationCandidate(**ENV, semantic_key="k", relation_type="playsFor",
+                          subject=PLAYER, object=PLAYER)
+    with pytest.raises(ValidationError, match="identity"):
+        RelationCandidate(**ENV, semantic_key="k", relation_type="PLAYS_FOR",
+                          subject="Player:123", object=PLAYER)  # bare id string
+
+
+def test_attribute_assertion_candidate():
+    c = AttributeAssertionCandidate(**ENV, semantic_key="k", subject=PLAYER,
+                                    attribute="batting_avg", value=0.312)
+    assert c.candidate_kind == "attribute_assertion"
+    with pytest.raises(ValidationError):
+        AttributeAssertionCandidate(**ENV, semantic_key="k", subject=PLAYER,
+                                    attribute="", value=1)
+
+
+def test_artifact_candidate():
+    c = ArtifactCandidate(**ENV, semantic_key="k", artifact_type="cut_list",
+                          artifact_hash="sha256:abc", source_uri="s3://b/cuts.csv")
+    assert c.candidate_kind == "artifact"
+    with pytest.raises(ValidationError):
+        ArtifactCandidate(**ENV, semantic_key="k", artifact_type="cut_list",
+                          artifact_hash="", source_uri="s3://b/x")
+```
+
+- [ ] **Step 2: Run tests to verify they fail** — Expected: `ImportError: cannot import name 'EntityCandidate'`
+
+- [ ] **Step 3: Append the four variants to `candidates.py`**
+
+One shared `_validate_subject_ref(value: EntityRef | str) -> EntityRef | str` helper (raises naming the offending value if a `str` is not an identity ID — bare `Label:key` strings fail here with the ADR-0008 message). Each variant sets `candidate_kind` with a `Literal` type and default.
+
+- [ ] **Step 4: Run all candidate tests** — Run: `.venv/bin/pytest tests/contracts/test_candidate_envelope.py tests/contracts/test_candidate_variants.py -v`. Expected: 14 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/kg_contracts/candidates.py tests/contracts/test_candidate_variants.py
+git commit -m "feat(contracts): implemented candidate variants — entity/relation/attribute-assertion/artifact (D2)"
+```
+
+---
+
+### Task 10: Spec-level variants + the nine-way Candidate discriminated union
+
+The remaining five variants are **defined** in v1 contracts (A2: no breaking union change later) but **spec-level**: indicative fields plus an open `payload`, placeholder validation only, and an explicit `SPEC-LEVEL` marker naming the phase that implements them (D2).
+
+**Files:**
+- Modify: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/candidates.py` (append)
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_candidate_union.py`
+
+**Interfaces:**
+- Consumes: Tasks 8–9 plus `IdentityLinkKind` (Task 5), `Derivation` (Task 6)
+- Produces:
+  - `ObservationCandidate(candidate_kind: Literal["observation"], metric: str, method: str | None = None, parameters: dict[str, object] = {}, value: object = None, payload: dict[str, object] = {})` — SPEC-LEVEL (implemented Phase 4, construction)
+  - `DerivedAssertionCandidate(candidate_kind: Literal["derived_assertion"], derivation: Derivation, conclusion: dict[str, object] = {}, payload: dict[str, object] = {})` — SPEC-LEVEL (Phase 4); derivation is required even at spec level — a derived assertion without lineage is meaningless
+  - `PlanCandidate(candidate_kind: Literal["plan"], objective: str, inputs: tuple[str, ...] = (), payload: dict[str, object] = {})` — SPEC-LEVEL (Phase 4); a generated cut list is not a fact about the building
+  - `OntologyCandidate(candidate_kind: Literal["ontology"], term_kind: Literal["entity_type", "relation_type", "attribute"], term: str, definition: str | None = None, payload: dict[str, object] = {})` — SPEC-LEVEL (enters the §7.3 PROPOSED→APPROVED lifecycle; wired in Plan 3)
+  - `IdentityLinkCandidate(candidate_kind: Literal["identity_link"], left: str, right: str, kind: IdentityLinkKind, payload: dict[str, object] = {})` — SPEC-LEVEL (Phase 3 retrofit); placeholder validation: left/right non-empty strings only (full endpoint validation lands with the implementation)
+  - `Candidate` — `Annotated[EntityCandidate | RelationCandidate | AttributeAssertionCandidate | ObservationCandidate | DerivedAssertionCandidate | ArtifactCandidate | PlanCandidate | OntologyCandidate | IdentityLinkCandidate, Field(discriminator="candidate_kind")]`
+  - `CANDIDATE_KINDS: frozenset[str]` — the nine kind strings
+  - `candidate_adapter: TypeAdapter[Candidate]` — module-level, for deserializing ledger rows / wire payloads
+  - `IMPLEMENTED_KINDS: frozenset[str] = {"entity", "relation", "attribute_assertion", "artifact"}` — what v1 pipelines accept; admission (KGCS) rejects spec-level kinds with "defined but not implemented in v1" rather than a validation error
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/contracts/test_candidate_union.py`:
+```python
+import pytest
+from pydantic import ValidationError
+
+from kg_contracts.candidates import (
+    CANDIDATE_KINDS,
+    IMPLEMENTED_KINDS,
+    CandidateScores,
+    ObservationCandidate,
+    SourceCoordinates,
+    candidate_adapter,
+)
+
+SCORES = CandidateScores(extraction_confidence=0.9, source_reliability=0.8)
+COORDS = SourceCoordinates(source_type="sensor", locator="loop-7")
+ENV = dict(graph_id="traffic", producer="p", producer_run_id="r1",
+           ontology_version="1", source_coordinates=COORDS,
+           semantic_key="k", scores=SCORES)
+
+
+def test_all_nine_kinds_defined():
+    assert CANDIDATE_KINDS == {
+        "entity", "relation", "attribute_assertion", "observation",
+        "derived_assertion", "artifact", "plan", "ontology", "identity_link",
+    }
+    assert IMPLEMENTED_KINDS == {"entity", "relation", "attribute_assertion",
+                                 "artifact"}
+
+
+def test_union_discriminates_on_candidate_kind():
+    raw = dict(**ENV, candidate_kind="observation", metric="speed_avg")
+    parsed = candidate_adapter.validate_python(raw)
+    assert isinstance(parsed, ObservationCandidate)
+
+
+def test_union_rejects_unknown_kind():
+    with pytest.raises(ValidationError):
+        candidate_adapter.validate_python(dict(**ENV, candidate_kind="vibe"))
+
+
+def test_spec_level_variants_are_marked():
+    from kg_contracts import candidates
+
+    for cls_name in ("ObservationCandidate", "DerivedAssertionCandidate",
+                     "PlanCandidate", "OntologyCandidate",
+                     "IdentityLinkCandidate"):
+        assert "SPEC-LEVEL" in getattr(candidates, cls_name).__doc__
+
+
+def test_roundtrip_serialization():
+    c = ObservationCandidate(**ENV, metric="speed_avg", value=42.1)
+    again = candidate_adapter.validate_json(c.model_dump_json())
+    assert again == c
+```
+
+- [ ] **Step 2: Run tests to verify they fail** — Expected: `ImportError: cannot import name 'CANDIDATE_KINDS'`
+
+- [ ] **Step 3: Append spec-level variants, union, adapter, kind sets** per Interfaces. Each spec-level docstring starts `"""SPEC-LEVEL (implemented in <phase>): ..."""`.
+
+- [ ] **Step 4: Run all candidate tests** — Run: `.venv/bin/pytest tests/contracts/ -k candidate -v`. Expected: 19 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/kg_contracts/candidates.py tests/contracts/test_candidate_union.py
+git commit -m "feat(contracts): nine-variant Candidate union; five spec-level variants (A2/D2)"
+```
+
+---
+
+### Task 11: kg_contracts.assertions — bitemporal assertions, canonical entity, conflicts
+
+**No PROVISIONAL status exists in this module** (ADR-0006): uncertainty lives in the candidate ledger as processing state (Task 14); the canonical graph holds only accepted identities and assertions.
+
+**Files:**
+- Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/assertions.py`
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_assertions.py`
+
+**Interfaces:**
+- Consumes: `new_ulid` (T3), `ValidPeriod`, `EvidenceRef`, `Provenance` (T4), `EntityRef`, `is_identity_id` (T5), `Derivation` (T6), `CandidateScores` (T8)
+- Produces (spec §3.2, §5.4, §7.5; frozen):
+  - `CurationStatus` StrEnum: `ACTIVE`, `SUPERSEDED`, `REVOKED` — exactly three; a test asserts `"PROVISIONAL" not in CurationStatus.__members__`
+  - `CanonicalEntity(identity_id: str, entity_type: str, aliases: tuple[EntityRef, ...], status: CurationStatus = ACTIVE, display_name: str | None = None, created_at: datetime, curation_epoch: int)` — identity_id must satisfy `is_identity_id`; aliases non-empty, types matching; **curation status attaches at assertion level too** — an entity can be certain while one of its properties is uncertain
+  - `Assertion(assertion_id: str = "as_" + ulid default, subject_identity: str, predicate: str, object_value: object | None, object_identity: str | None, status: CurationStatus, valid_period: ValidPeriod, recorded_at: datetime, superseded_at: datetime | None = None, scores: CandidateScores, evidence_refs: tuple[EvidenceRef, ...], authority: str, provenance: Provenance, derivation: Derivation | None = None, curation_epoch: int, trace_id: str)` — **bitemporal**: `valid_period` is domain valid time; `recorded_at`/`superseded_at` are transaction time. Exactly one of `object_value` / `object_identity` (relation-assertions point at identities). `authority` (who is entitled to assert this) is separate from every score (spec §7.5). Records are immutable — supersession writes a new record and sets `superseded_at` via a copy, performed by KGCS executors (Plan 3)
+  - `ConflictStatus` StrEnum: `UNRESOLVED`, `RESOLVED`
+  - `ConflictRecord(conflict_id: str = "cf_" + ulid default, assertion_ids: tuple[str, ...] (min 2), preferred_assertion_id: str | None, resolution_policy: str | None, status: ConflictStatus)` — competing assertions are preserved, not overwritten; `preferred_assertion_id`, when set, must be one of `assertion_ids` and forces status `RESOLVED`
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/contracts/test_assertions.py` (key cases — write all of these):
+```python
+# 1. CurationStatus has exactly ACTIVE/SUPERSEDED/REVOKED; PROVISIONAL absent (ADR-0006)
+# 2. CanonicalEntity valid; rejects non-identity identity_id (match="identity");
+#    rejects empty aliases; frozen
+# 3. Assertion with object_value and open-ended valid_period validates;
+#    recorded_at required; superseded_at None => current
+# 4. Assertion requires exactly one of object_value/object_identity (match="exactly one");
+#    object_identity must be an identity ID
+# 5. Assertion carries CandidateScores and non-empty authority (empty authority rejected)
+# 6. ConflictRecord requires >= 2 assertion_ids; preferred id must be a member;
+#    setting preferred forces status RESOLVED (mismatch rejected, match="RESOLVED")
+```
+
+- [ ] **Step 2: Run tests to verify they fail** — Expected: `ModuleNotFoundError`
+
+- [ ] **Step 3: Implement `assertions.py`** per Interfaces; module docstring cites ADR-0006 (three-store separation — this module models canonical-graph records only) and spec §5.4/§7.5.
+
+- [ ] **Step 4: Run tests to verify they pass** — Expected: ~8 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/kg_contracts/assertions.py tests/contracts/test_assertions.py
+git commit -m "feat(contracts): bitemporal assertions, canonical entity, conflict records (ADR-0006)"
+```
+
+---
+
+### Task 12: kg_contracts.policy — score-set-aware ConfidencePolicy
+
+`ConfidencePolicy` remains a shared contract (not a KGCS internal), now evaluated over the `CandidateScores` set and consequence class rather than a single float (spec §5.10). It routes adjudication for entity promotion AND the registry's extend-vs-new decision. **Automating a decision later = policy config change, never code change.** Routes are `AUTO | LLM_ASSESS | HUMAN` — the v1 `CONSENSUS` (multi-agent debate) tier is demoted to an experimental kg_eval arm (disposition A6) and is NOT a route.
+
+**Files:**
+- Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/policy.py`
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_policy.py`
+
+**Interfaces:**
+- Consumes: `CandidateScores` (Task 8)
+- Produces (frozen):
+  - `AdjudicationRoute` StrEnum: `AUTO`, `LLM_ASSESS`, `HUMAN`
+  - `ConfidencePolicy(policy_version: str = "1", auto_min_extraction: float = 0.95, auto_min_source_reliability: float = 0.90, auto_max_policy_risk: float = 0.20, assess_min_extraction: float = 0.80, require_identity_confidence_for_auto: bool = True, auto_min_identity_confidence: float = 0.95)` with `route(scores: CandidateScores) -> AdjudicationRoute`:
+    1. `policy_risk > auto_max_policy_risk` → never AUTO (high-consequence candidates go to at least LLM_ASSESS; > 0.5 → HUMAN)
+    2. AUTO requires extraction ≥ auto_min_extraction AND source_reliability ≥ auto_min_source_reliability AND (identity_confidence ≥ auto_min_identity_confidence when required — a **missing** identity_confidence is not silently treated as good: honest-null)
+    3. else LLM_ASSESS if extraction ≥ assess_min_extraction
+    4. else HUMAN
+  - Threshold ordering validated: `auto_min_extraction >= assess_min_extraction`
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/contracts/test_policy.py`:
+```python
+import pytest
+from pydantic import ValidationError
+
+from kg_contracts.candidates import CandidateScores
+from kg_contracts.policy import AdjudicationRoute, ConfidencePolicy
+
+
+def scores(**kw: float) -> CandidateScores:
+    base = dict(extraction_confidence=0.99, source_reliability=0.95,
+                identity_confidence=0.99)
+    base.update(kw)
+    return CandidateScores(**base)  # type: ignore[arg-type]
+
+
+def test_routes_are_auto_llm_assess_human_only():
+    # CONSENSUS is gone: multi-agent debate is an experimental kg_eval arm (A6)
+    assert {r.value for r in AdjudicationRoute} == {"AUTO", "LLM_ASSESS", "HUMAN"}
+
+
+def test_high_everything_routes_auto():
+    assert ConfidencePolicy().route(scores()) is AdjudicationRoute.AUTO
+
+
+def test_exact_import_is_not_auto_without_source_reliability():
+    # deterministic sync no longer enters ACTIVE automatically at "confidence 1.0"
+    # (spec 5.5 / ADR-0004 as amended): the score set decides, not extraction alone
+    s = scores(extraction_confidence=1.0, source_reliability=0.5)
+    assert ConfidencePolicy().route(s) is AdjudicationRoute.LLM_ASSESS
+
+
+def test_missing_identity_confidence_blocks_auto():
+    s = CandidateScores(extraction_confidence=0.99, source_reliability=0.99)
+    assert ConfidencePolicy().route(s) is AdjudicationRoute.LLM_ASSESS
+
+
+def test_policy_risk_forces_human_review():
+    assert ConfidencePolicy().route(scores(policy_risk=0.9)) \
+        is AdjudicationRoute.HUMAN
+
+
+def test_low_extraction_routes_human():
+    s = scores(extraction_confidence=0.3)
+    assert ConfidencePolicy().route(s) is AdjudicationRoute.HUMAN
+
+
+def test_automation_is_config_not_code():
+    # the learning-system endgame: loosen thresholds by config, no code change
+    p = ConfidencePolicy(auto_min_extraction=0.5, assess_min_extraction=0.2,
+                         auto_min_source_reliability=0.4,
+                         require_identity_confidence_for_auto=False)
+    s = CandidateScores(extraction_confidence=0.6, source_reliability=0.5)
+    assert p.route(s) is AdjudicationRoute.AUTO
+
+
+def test_threshold_ordering_enforced():
+    with pytest.raises(ValidationError, match="ordered"):
+        ConfidencePolicy(auto_min_extraction=0.5, assess_min_extraction=0.8)
+```
+
+- [ ] **Step 2: Run tests to verify they fail** — Expected: `ModuleNotFoundError`
+
+- [ ] **Step 3: Implement `policy.py`** per Interfaces (route logic exactly as the numbered rules; docstring cites spec §5.10 and A6).
+
+- [ ] **Step 4: Run tests to verify they pass** — Expected: 8 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/kg_contracts/policy.py tests/contracts/test_policy.py
+git commit -m "feat(contracts): score-set-aware ConfidencePolicy, AUTO/LLM_ASSESS/HUMAN (spec 5.10)"
+```
+
+---
