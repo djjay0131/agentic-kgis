@@ -4,7 +4,7 @@ Status: Approved
 Last updated: 2026-07-10 (principles 2, 3, 4, 6 reworded; adopter ordering
 and milestone labels remapped — per the approved disposition of external
 review PR #1, Consequences §2)
-Governance: agentic-governance v0.1
+Governance: agentic-governance v0.2
 
 This file localizes [agentic-governance](https://github.com/djjay0131/agentic-governance)
 for this project.
@@ -63,7 +63,51 @@ design spec (covers this repo and `agentic-kgcs`).
 
 ## Memory Bank
 
-Layout: `llm/memory_bank/`
+Path: `llm/memory_bank/`
+
+## Roadmap
+
+Path: none (the plan sequence in spec v2 §11 and `docs/superpowers/plans/`
+serve as the roadmap; no checkbox roadmap document exists).
+
+## Governance Check Command
+
+`node ~/code/agentic-governance/governance/scripts/governance-checks.mjs`
+(canonical script from the agentic-governance checkout; CI wiring pending.)
+
+## L0 Path Allowlist
+
+```l0-allowlist
+allow llm/memory_bank/** path-only
+allow docs/adr/README.md index-table-rows
+allow docs/adr/[0-9][0-9][0-9][0-9]-*.md status-line-only
+allow docs/** link-target-only
+deny src/**
+deny scripts/**
+deny .github/**
+deny docs/adr/0000-template.md
+deny docs/superpowers/specs/**
+```
+
+## Platform Enforcement Reality
+
+- Branch protection on `main`: unavailable (private repo, free plan —
+  verified via `gh api` 403 on 2026-07-09). Merge discipline is
+  convention-enforced.
+- Required status checks: unavailable (same constraint).
+- Token/identity model: all agent sessions authenticate with the owner's
+  token — steward/auditor/architect are procedural roles, not distinct
+  identities; independence is temporal/artifactual.
+- Hardening path: GitHub Pro or public visibility would enable branch
+  protection and required checks; blocked on owner's plan decision.
+
+## Steward Activation Status
+
+Status: INACTIVE
+
+Steward merge authority ships inert (agentic-governance
+`docs/l0-fast-track.md` §Per-Repo Activation). No activation ADR or PR
+exists; all merges are human-owner-only.
 
 ## Milestone Labels
 
