@@ -1254,3 +1254,492 @@ git commit -m "feat(contracts): score-set-aware ConfidencePolicy, AUTO/LLM_ASSES
 ```
 
 ---
+
+### Task 13: kg_contracts.stores — read side: GraphReadOptions, capabilities, readers
+
+*Phase-0 lesson (vttsi-contracts):* one broad `GraphStore` protocol becomes either too weak or too demanding once multiple backends, temporal curation, and rollback share it — v2 splits reader/writer protocols and declares capabilities (spec §5.6–5.7). No Cypher/GQL on core contracts.
+
+**Files:**
+- Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/stores.py`
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_stores_read.py`
+
+**Interfaces:**
+- Consumes: `CanonicalEntity`, `Assertion` (Task 11), `EntityRef` (Task 5)
+- Produces (spec §3.3, §5.6–5.7):
+  - `AdapterCapabilities` (frozen; all default `False`): `supports_transactions`, `supports_temporal_queries`, `supports_vector_search`, `supports_full_text`, `supports_constraints`, `supports_bulk_upsert`, `supports_snapshot_reads`, `supports_graph_algorithms`
+  - `UnsupportedCapabilityError(RuntimeError)` — raised when an option requires an undeclared capability (never silently ignored)
+  - `GraphReadOptions` (frozen): `curation_epoch: int | None = None` (None = latest **published** epoch — readers consume a published epoch, never "whatever is present"), `valid_at: datetime | None = None`, `transaction_at: datetime | None = None`, `include_provisional: bool = False` (opt-in ledger visibility; default canonical-only), `include_superseded: bool = False`, `minimum_evidence_policy: str | None = None`
+  - `CapabilityDeclaring` Protocol (runtime-checkable): `capabilities() -> AdapterCapabilities`
+  - `GraphReader` Protocol (runtime-checkable): `current_epoch() -> int`; `get_entity(identity_id: str, options: GraphReadOptions = GraphReadOptions()) -> CanonicalEntity | None`; `find_entities(entity_type: str | None = None, alias: EntityRef | None = None, options: ... ) -> list[CanonicalEntity]`; `assertions_for(identity_id: str, options: ...) -> list[Assertion]`; `neighborhood(identity_id: str, hops: int = 1, options: ...) -> list[CanonicalEntity]`
+  - `TemporalGraphReader(GraphReader)` Protocol — marker for adapters honoring `valid_at`/`transaction_at`; non-temporal adapters MUST raise `UnsupportedCapabilityError` when given temporal options (capability-declared, spec §5.4: memory store first, others as adopters need them)
+  - `GraphWriter`, `TransactionalGraphWriter`, `BulkGraphWriter` Protocols — **adapter-internal** (docstring: used only by `GraphMutationStore` implementations, Plan 3; never application-facing): `put_entity(entity) -> None`, `put_assertion(assertion) -> None`, `mark_superseded(assertion_id, at) -> None`; transactional adds `begin() / commit() / rollback()`; bulk adds `put_entities(Sequence) -> int`
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/contracts/test_stores_read.py` (write all of these):
+```python
+# 1. GraphReadOptions defaults: canonical-only at latest published epoch
+#    (curation_epoch None, include_provisional False, include_superseded False)
+# 2. AdapterCapabilities defaults all False; frozen
+# 3. A duck-typed fake with the five reader methods satisfies GraphReader
+#    (runtime_checkable isinstance)
+# 4. GraphReader exposes NO write surface: for name in ("upsert_nodes",
+#    "upsert_edges", "put_entity", "apply", "submit"):
+#        assert name not in dir-of-protocol-members  (ADR-0010: reads and
+#    writes never share a surface)
+# 5. UnsupportedCapabilityError is a RuntimeError subclass
+```
+
+- [ ] **Step 2: Run tests to verify they fail** — Expected: `ModuleNotFoundError`
+
+- [ ] **Step 3: Implement the read side of `stores.py`** per Interfaces; module docstring cites ADR-0010 and spec §3.3/§5.6/§5.7.
+
+- [ ] **Step 4: Run tests to verify they pass** — Expected: 5 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/kg_contracts/stores.py tests/contracts/test_stores_read.py
+git commit -m "feat(contracts): split reader protocols, GraphReadOptions, capability declarations"
+```
+
+---
+
+### Task 14: kg_contracts.curation — processing states, operations, decisions, CurationPlan, review
+
+**Files:**
+- Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/curation.py`
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_curation.py`
+
+**Interfaces:**
+- Consumes: `new_ulid` (T3), `AdjudicationRoute` (T12)
+- Produces (spec §7.1–7.2, §7.6, §7.8; frozen and JSON-serializable — every object in the curation pipeline is auditable):
+  - `ProcessingState` StrEnum (candidate lifecycle in the **ledger** — separate from entity/assertion `CurationStatus`, ADR-0006): `RECEIVED`, `VALIDATED`, `INVALID`, `BLOCKED`, `RESOLUTION_PENDING`, `REVIEW_PENDING`, `ACCEPTED`, `REJECTED`, `SUPERSEDED`, `RETRYABLE_ERROR`, `PERMANENT_ERROR`
+  - `FailureKind` StrEnum: `BAD_DATA`, `UNSUPPORTED_ONTOLOGY`, `TRANSIENT_FAULT` — each gets different retry/alert behavior so transient faults never become permanent quarantines (fail-closed must not become fail-stopped, spec §7.2)
+  - `CurationOperationType` StrEnum: `CREATE_IDENTITY`, `ATTACH_ASSERTION`, `MERGE_IDENTITIES`, `SPLIT_IDENTITY`, `REASSIGN_ASSERTION`, `RETRACT_ASSERTION`, `PROMOTE_ONTOLOGY_TERM`
+  - `CurationOperation(operation_id: str = "op_" + ulid default, type: CurationOperationType, payload: dict[str, object], reversal_data: dict[str, object] = {})` — **every operation logs enough to reverse it** (pre-merge member set, lineage, affected projections); rollback is a compensating operation, not deletion of history
+  - `Precondition(kind: str, subject: str, expected: str)` — optimistic concurrency: e.g. `kind="cluster_version", subject=<identity_id>, expected="17"`; resolution decides against an identity cluster at a known version, never one arbitrary node
+  - `ValidationDecision(candidate_id: str, valid: bool, failure_kind: FailureKind | None, reasons: tuple[str, ...], policy_version: str, trace_id: str)` — `valid=False` requires `failure_kind`
+  - `ResolutionDecision(candidate_id: str, resolved_identity: str | None, create_new_identity: bool, route: AdjudicationRoute, score_vector: dict[str, float], matcher_version: str | None, snapshot_version: str, trace_id: str)` — the **full score vector and model versions** are logged; a single stored final confidence cannot reproduce a decision (spec §7.4)
+  - `CurationPlan(plan_id: str = "pl_" + ulid default, candidate_ids: tuple[str, ...] (min 1), snapshot_version: str, operations: tuple[CurationOperation, ...], preconditions: tuple[Precondition, ...], evidence_ids: tuple[str, ...], policy_version: str)` — spec §7.1 verbatim shape
+  - `ReviewAction` StrEnum (spec §7.6, OpenRefine semantics — approve/reject alone is NOT enough): `APPROVE`, `REJECT`, `EDIT`, `SPLIT`, `RELABEL`, `LINK`, `MERGE_ELSEWHERE`, `SAME_CONCEPT_DIFFERENT_SCOPE`
+  - `ReviewItem(item_id: str = "rv_" + ulid default, kind: str, payload: dict[str, object], priority: Literal["P1", "P2", "P3"] = "P3", reason: str, enqueued_at: datetime)` — P1=24h, P2=7d, P3=30d SLAs
+  - `ReviewDecision(item_id: str, action: ReviewAction, actor: str, edited_payload: dict[str, object] | None = None, note: str | None = None, decided_at: datetime)` — `EDIT` requires `edited_payload`
+  - `ReviewQueue` Protocol (runtime-checkable): `enqueue(item: ReviewItem) -> str`, `pending(limit: int = 50) -> list[ReviewItem]`, `resolve(decision: ReviewDecision) -> None`, `history(item_id: str) -> list[ReviewDecision]` (operation history is part of the contract — the future UI builds on it)
+  - `AuditRecord(audit_id: str = "au_" + ulid default, operation_id: str, decided_by: str, score_vector: dict[str, float], evidence_ids: tuple[str, ...], policy_version: str, trace_id: str, recorded_at: datetime)` — immutable; the audit stream is the training corpus that later justifies raising auto-promotion thresholds (spec §7.8)
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/contracts/test_curation.py` (write all of these):
+```python
+# 1. ProcessingState has exactly the 11 spec states; disjoint from
+#    CurationStatus values (no PROVISIONAL here either — it is a ledger state
+#    machine, not a graph status)
+# 2. ValidationDecision: valid=False without failure_kind rejected
+#    (match="failure_kind"); valid=True with failure_kind rejected
+# 3. ResolutionDecision requires a non-empty score_vector and snapshot_version
+# 4. CurationPlan: requires >=1 candidate_id; full JSON round-trip —
+#    CurationPlan.model_validate_json(plan.model_dump_json()) == plan
+#    (serializability is the executor seam, ADR-0010)
+# 5. CurationOperation carries reversal_data; frozen
+# 6. ReviewAction has all 8 operations (assert exact value set)
+# 7. ReviewDecision with action=EDIT and no edited_payload rejected
+# 8. Duck-typed fake satisfies ReviewQueue (runtime_checkable), including
+#    history()
+```
+
+- [ ] **Step 2: Run tests to verify they fail** — Expected: `ModuleNotFoundError`
+
+- [ ] **Step 3: Implement `curation.py`** per Interfaces; docstring cites §7.1/§7.2/§7.6/§7.8 and ADR-0006/0010.
+
+- [ ] **Step 4: Run tests to verify they pass** — Expected: ~9 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/kg_contracts/curation.py tests/contracts/test_curation.py
+git commit -m "feat(contracts): processing states, curation operations, CurationPlan, review operations"
+```
+
+---
+
+### Task 15: kg_contracts.stores — write side: CandidateSink + GraphMutationStore
+
+The two-level asymmetry is the point (ADR-0010): **applications get `CandidateSink` and nothing else**; `GraphMutationStore` exists only for KGCS executors. Exposing `upsert_nodes` to consumers (the vttsi-contracts shape) is superseded — convenient raw writes are how pipelines get bypassed.
+
+**Files:**
+- Modify: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/stores.py` (append)
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_stores_write.py`
+
+**Interfaces:**
+- Consumes: `Candidate` (T10), `CurationOperation`, `Precondition` (T14), `new_ulid` (T3)
+- Produces (frozen):
+  - `SubmissionStatus` StrEnum: `RECEIVED`, `DUPLICATE`, `INVALID` — synchronous admission outcome only (deterministic checks, spec §7.2); acceptance into the canonical graph is asynchronous and reported through processing states
+  - `SubmissionOutcome(candidate_id: str, status: SubmissionStatus, reason: str | None = None, trace_id: str)`
+  - `SubmissionResult(submission_id: str = "sub_" + ulid default, outcomes: tuple[SubmissionOutcome, ...])` with `counts() -> dict[SubmissionStatus, int]` helper
+  - `CandidateSink` Protocol (runtime-checkable): `submit(candidates: Sequence[Candidate]) -> SubmissionResult` — **the only application-facing write surface**
+  - `GraphMutationBatch(batch_id: str = "mb_" + ulid default, plan_id: str, operations: tuple[CurationOperation, ...] (min 1))` — compiled from a `CurationPlan`
+  - `CommitResult(batch_id: str, committed: bool, new_epoch: int | None = None, failed_preconditions: tuple[Precondition, ...] = (), error: str | None = None)` — committed requires `new_epoch` (mutations commit as atomic curation epochs, spec §3.3); not-committed with failed preconditions = stale snapshot, re-evaluate (never retry blindly)
+  - `GraphMutationStore` Protocol (runtime-checkable): `apply(batch: GraphMutationBatch, preconditions: Sequence[Precondition]) -> CommitResult` — docstring: **executor-only; applications must never hold this** (governance-delta principle 3)
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/contracts/test_stores_write.py` (write all of these):
+```python
+# 1. Duck-typed fakes satisfy CandidateSink and GraphMutationStore
+# 2. CandidateSink protocol surface is submit() ONLY — assert no attribute
+#    named upsert_nodes/upsert_edges/apply/put_entity is part of the protocol
+# 3. SubmissionResult.counts() aggregates outcomes by status
+# 4. CommitResult: committed=True without new_epoch rejected (match="epoch");
+#    committed=False with failed_preconditions carries them
+# 5. GraphMutationBatch requires >=1 operation; JSON round-trip equality
+```
+
+- [ ] **Step 2: Run tests to verify they fail** — Expected: `ImportError`
+
+- [ ] **Step 3: Append the write side to `stores.py`** per Interfaces.
+
+- [ ] **Step 4: Run tests to verify they pass** — Run: `.venv/bin/pytest tests/contracts/test_stores_write.py -v`. Expected: ~6 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/kg_contracts/stores.py tests/contracts/test_stores_write.py
+git commit -m "feat(contracts): CandidateSink + executor-only GraphMutationStore (ADR-0010)"
+```
+
+---
+
+### Task 16: kg_contracts.ingestion — Source, Extractor, CompletionClient, IngestJob, IngestReport
+
+**Files:**
+- Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/ingestion.py`
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_ingestion.py`
+
+**Interfaces:**
+- Consumes: `Candidate` (T10), `Provenance` (T4), `SubmissionOutcome`, `SubmissionStatus` (T15)
+- Produces (spec §5 module list, §6, §9):
+  - `Source` Protocol (runtime-checkable): `fetch() -> Iterator[Candidate]` — structured mode. NOTE the v2 change: deterministic sources emit a **full score set** (`extraction_confidence` may be 1.0 while `source_reliability` is honest); there is no "confidence 1.0 ⇒ auto-ACTIVE" path anymore (ADR-0004 as amended)
+  - `Extractor` Protocol (runtime-checkable): `name: str` property; `extract(text: str, provenance: Provenance) -> list[Candidate]` — one entity type per extractor is config, not code
+  - `CompletionClient` Protocol (runtime-checkable): `complete(prompt: str, *, system: str | None = None) -> str` — the LLM provider injection point; KGIS mandates no provider
+  - `IngestJob` Protocol — SPEC-LEVEL (spec §5 lists it; the pipeline's real shape — batching, registry consultation, resumability — is fixed in Plan 4): `job_id: str` property; `run() -> IngestReport`
+  - `IngestReport(graph_id: str, received: int = 0, duplicates: int = 0, invalid: int = 0, incomplete: bool = False, failures: list[str] = [])` — **mutable accumulator by design** (NOT frozen): `record(outcome: SubmissionOutcome) -> None` increments by status; `fail(message: str) -> None` sets `incomplete=True` and appends. A failed extractor yields a partial report marked incomplete — **never a silent gap** (spec §9)
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/contracts/test_ingestion.py` (write all of these):
+```python
+# 1. Duck-typed fakes satisfy Source, Extractor, CompletionClient, IngestJob
+# 2. IngestReport.record() tallies RECEIVED/DUPLICATE/INVALID outcomes
+#    correctly (submit three mixed outcomes, assert the three counters)
+# 3. IngestReport.fail("extractor player-extractor: timeout") sets
+#    incomplete=True and captures the message
+# 4. IngestJob is documented SPEC-LEVEL ("SPEC-LEVEL" in IngestJob.__doc__)
+```
+
+- [ ] **Step 2: Run tests to verify they fail** — Expected: `ModuleNotFoundError`
+
+- [ ] **Step 3: Implement `ingestion.py`** per Interfaces.
+
+- [ ] **Step 4: Run tests to verify they pass** — Expected: 4 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/kg_contracts/ingestion.py tests/contracts/test_ingestion.py
+git commit -m "feat(contracts): Source/Extractor/CompletionClient/IngestJob + IngestReport"
+```
+
+---
+
+### Task 17: kg_contracts.registry — GraphDescriptor, Recommendation, RegistryStore
+
+**Files:**
+- Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/registry.py`
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_registry.py`
+
+**Interfaces:**
+- Consumes: nothing new
+- Produces (spec §8, ADR-0005 as amended, disposition D3; frozen):
+  - `Backend` StrEnum: `SPANNER`, `NEO4J`, `MEMORY`
+  - `GraphDescriptor(name, owner, domain, tags: tuple[str, ...] = (), backend: Backend, connection_ref: str | None = None, node_types: tuple[str, ...] = (), edge_types: tuple[str, ...] = (), ontology_version: str | None = None, policy_ref: str | None = None, created_by: str, decision_record: str | None = None)` — `connection_ref` is a secret NAME (e.g. a Secret Manager key), never a secret value
+  - `Recommendation(action: Literal["extend", "create"], graph_name: str | None = None, factor_scores: dict[str, float] (values 0..1), checklist: tuple[str, ...], reasons: tuple[str, ...] (min 1))` — v1 scores five factors (identity value, ontology compatibility, tenancy, lifecycle, computational coupling); the remaining factors appear in `checklist` as a structured human checklist (D3 — the human is in the loop in v1 anyway). `extend` requires `graph_name`. No single overall score field: the advisor routes through `ConfidencePolicy` like everything else
+  - `SCORED_FACTORS_V1: frozenset[str]` = the five factor names above; `factor_scores` keys must be a subset
+  - `RegistryStore` Protocol (runtime-checkable): `register(descriptor: GraphDescriptor) -> None`, `get(name: str) -> GraphDescriptor | None`, `all() -> list[GraphDescriptor]`
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/contracts/test_registry.py` (write all of these):
+```python
+# 1. GraphDescriptor valid + frozen (mutation raises)
+# 2. Recommendation extend without graph_name rejected (match="graph_name")
+# 3. Recommendation with factor_scores key outside SCORED_FACTORS_V1
+#    rejected (match="factor")
+# 4. Recommendation carries checklist entries for unscored factors
+# 5. Duck-typed fake satisfies RegistryStore
+```
+
+- [ ] **Step 2: Run tests to verify they fail** — Expected: `ModuleNotFoundError`
+
+- [ ] **Step 3: Implement `registry.py`** per Interfaces (docstring: schema + protocol only; the SQLite implementation lives in `kgis`, the advisor in `kgcs` — Plan 7).
+
+- [ ] **Step 4: Run tests to verify they pass** — Expected: 5 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/kg_contracts/registry.py tests/contracts/test_registry.py
+git commit -m "feat(contracts): GraphDescriptor, five-factor Recommendation + checklist (D3), RegistryStore"
+```
+
+---
+
+### Task 18: kg_contracts.testing — memory adapters + reusable contract test suites
+
+*Phase-0 lesson (vttsi contract-test discipline):* every implementation of a port must pass the same reusable suite unchanged; the memory adapter exists so both repos (and every adopter) test with zero infrastructure. The memory store is the **first backend with full temporal-query support** (spec §10.2).
+
+**Files:**
+- Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/testing/__init__.py` (empty)
+- Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/testing/memory.py`
+- Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/testing/contract.py`
+- Create: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/testing/factories.py`
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_memory_adapters.py`
+
+**Interfaces:**
+- Consumes: everything from Tasks 3–17
+- Produces:
+  - `factories.py` — test-data builders shared by the suites and downstream repos: `make_scores()`, `make_coords()`, `make_entity_candidate(graph_id=..., key=...)`, `make_attribute_candidate(...)`, `make_entity(...)`, `make_assertion(...)` (sensible valid defaults, keyword overrides)
+  - `memory.MemoryCandidateSink` — implements `CandidateSink` + `CapabilityDeclaring`. Dict-backed ledger keyed by `(graph_id, semantic_key)`: first submit → `RECEIVED`, same semantic key again → `DUPLICATE` (idempotency by semantic key, NOT content hash — spec §5.8). Test helper: `received() -> list[Candidate]`
+  - `memory.MemoryGraphStore` — implements `GraphReader` + `TemporalGraphReader` + `GraphMutationStore` + `CapabilityDeclaring` (declares `supports_temporal_queries=True`, `supports_snapshot_reads=True`). Behavior:
+    - `apply()` supports `CREATE_IDENTITY` (payload: a `CanonicalEntity` dump) and `ATTACH_ASSERTION` (payload: an `Assertion` dump) in Plan 1; the other five operation types raise `NotImplementedError` with "Plan 3" in the message
+    - preconditions of kind `entity_version` are checked against an internal per-identity version counter; any failed precondition → `CommitResult(committed=False, failed_preconditions=...)` and **nothing** is applied (atomicity)
+    - each successful `apply()` advances the epoch by 1 and stamps applied records with it; `current_epoch()` returns the last **published** epoch
+    - reads honor `GraphReadOptions`: default excludes superseded; `curation_epoch=N` hides records stamped with a later epoch (snapshot read); `valid_at`/`transaction_at` filter assertions bitemporally
+  - `contract.MemoryReviewQueue` — list-backed `ReviewQueue` with `history()`
+  - `contract.py` — reusable pytest-style suites (subclass, implement the `make_*` factory, get the tests free; spec §10.2 — every adapter, memory/Neo4j/Spanner, must pass unchanged):
+    - `CandidateSinkContract` (`make_sink()`): submit → all `RECEIVED`; resubmit same semantic key → `DUPLICATE`; outcomes carry trace ids; `counts()` consistent
+    - `GraphMutationStoreContract` (`make_store()`): create+attach commits and returns a new epoch; entity readable after commit, not before; failed `entity_version` precondition → `committed=False`, listed preconditions, store unchanged; superseded assertions hidden by default, visible with `include_superseded=True`; snapshot read at an old epoch hides later records; **capability conformance** — if `capabilities().supports_temporal_queries` is False, temporal options must raise `UnsupportedCapabilityError`; if True, `valid_at` filtering must work
+    - `ReviewQueueContract` (`make_queue()`): enqueue/pending ordering; resolve removes from pending; `history()` returns decisions in order; EDIT decision round-trips `edited_payload`
+
+- [ ] **Step 1: Write the failing test (suites applied to the memory adapters)**
+
+`tests/contracts/test_memory_adapters.py`:
+```python
+from kg_contracts.stores import CandidateSink, GraphMutationStore
+from kg_contracts.testing.contract import (
+    CandidateSinkContract,
+    GraphMutationStoreContract,
+    MemoryReviewQueue,
+    ReviewQueueContract,
+)
+from kg_contracts.testing.memory import MemoryCandidateSink, MemoryGraphStore
+
+
+class TestMemoryCandidateSink(CandidateSinkContract):
+    def make_sink(self) -> CandidateSink:
+        return MemoryCandidateSink()
+
+
+class TestMemoryGraphStore(GraphMutationStoreContract):
+    def make_store(self) -> GraphMutationStore:
+        return MemoryGraphStore()
+
+
+class TestMemoryReviewQueue(ReviewQueueContract):
+    def make_queue(self) -> MemoryReviewQueue:
+        return MemoryReviewQueue()
+```
+
+- [ ] **Step 2: Run tests to verify they fail** — Expected: `ModuleNotFoundError`
+
+- [ ] **Step 3: Implement `factories.py`, then `memory.py`, then `contract.py`** in that order (factories → adapters → suites), re-running the suite as behaviors land. Adapters are pure dicts/lists — no I/O (Global Constraints).
+
+- [ ] **Step 4: Run tests to verify they pass** — Run: `.venv/bin/pytest tests/contracts/test_memory_adapters.py -v`. Expected: all contract tests pass (~14, exact count set by the suites)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/kg_contracts/testing tests/contracts/test_memory_adapters.py
+git commit -m "feat(contracts): memory adapters + reusable contract suites (spec 10.2)"
+```
+
+---
+
+### Task 19: Public API, quality gate, CI, cross-repo verification, memory bank
+
+**Files:**
+- Modify: `/Users/djjay0131/code/agentic-kgis/src/kg_contracts/__init__.py`
+- Create: `/Users/djjay0131/code/agentic-kgis/.github/workflows/ci.yml`
+- Create: `/Users/djjay0131/code/agentic-kgcs/.github/workflows/ci.yml`
+- Modify: `/Users/djjay0131/code/agentic-kgis/llm/memory_bank/{activeContext,progress}.md`
+- Modify: `/Users/djjay0131/code/agentic-kgcs/llm/memory_bank/{activeContext,progress}.md`
+- Test: `/Users/djjay0131/code/agentic-kgis/tests/contracts/test_public_api.py`, `/Users/djjay0131/code/agentic-kgcs/tests/test_contracts_available.py`
+
+**Interfaces:**
+- Consumes: everything from Tasks 3–18
+- Produces: stable import surface `from kg_contracts import Candidate, CandidateSink, EntityRef, ...`; green ruff/mypy/pytest in both repos; CI workflows; memory banks synced
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/contracts/test_public_api.py` — one import of the full public surface:
+```python
+def test_top_level_exports() -> None:
+    from kg_contracts import (  # noqa: F401
+        # security (T3)
+        DeletionBehavior, PolicyContext, new_trace_id,
+        # evidence (T4)
+        AbsenceReason, Evidence, EvidenceAvailability, EvidenceRef,
+        EvidenceRelationship, Provenance, ValidPeriod,
+        # identity (T5)
+        EntityRef, IdentityError, IdentityLink, IdentityLinkKind,
+        is_identity_id, new_identity_id, parse_identity_id,
+        # derivation (T6)
+        Derivation, DerivationInput,
+        # versioning (T7)
+        CONTRACT_VERSION, CompatibilityClass, VersionChange,
+        VersionedComponentKind,
+        # candidates (T8-T10)
+        CANDIDATE_KINDS, IMPLEMENTED_KINDS, ArtifactCandidate,
+        AttributeAssertionCandidate, Candidate, CandidateEnvelope,
+        CandidateScores, DerivedAssertionCandidate, EntityCandidate,
+        IdentityLinkCandidate, ObservationCandidate, OntologyCandidate,
+        PlanCandidate, RelationCandidate, Representation, SourceCoordinates,
+        candidate_adapter,
+        # assertions (T11)
+        Assertion, CanonicalEntity, ConflictRecord, ConflictStatus,
+        CurationStatus,
+        # policy (T12)
+        AdjudicationRoute, ConfidencePolicy,
+        # stores (T13, T15)
+        AdapterCapabilities, CandidateSink, CommitResult, GraphMutationBatch,
+        GraphMutationStore, GraphReader, GraphReadOptions, SubmissionOutcome,
+        SubmissionResult, SubmissionStatus, TemporalGraphReader,
+        UnsupportedCapabilityError,
+        # curation (T14)
+        AuditRecord, CurationOperation, CurationOperationType, CurationPlan,
+        FailureKind, Precondition, ProcessingState, ResolutionDecision,
+        ReviewAction, ReviewDecision, ReviewItem, ReviewQueue,
+        ValidationDecision,
+        # ingestion (T16)
+        CompletionClient, Extractor, IngestJob, IngestReport, Source,
+        # registry (T17)
+        Backend, GraphDescriptor, Recommendation, RegistryStore,
+        SCORED_FACTORS_V1,
+    )
+```
+(Adapter-internal writer protocols — `GraphWriter` and friends — are deliberately NOT re-exported at top level; they stay importable from `kg_contracts.stores` with their internal-use docstrings.)
+
+- [ ] **Step 2: Run test to verify it fails** — Expected: `ImportError` (empty `__init__.py`)
+
+- [ ] **Step 3: Write the exports** — populate `src/kg_contracts/__init__.py` with the imports above plus `__all__`; module docstring names the spec and CONTRACT_VERSION.
+
+- [ ] **Step 4: Run the full quality gate**
+
+```bash
+cd /Users/djjay0131/code/agentic-kgis
+.venv/bin/pytest -v
+.venv/bin/ruff check src tests
+.venv/bin/mypy src
+```
+Expected: all tests pass (≈95), ruff clean, mypy --strict clean on `src`. Fix findings before proceeding.
+
+- [ ] **Step 5: Add CI workflows**
+
+`agentic-kgis/.github/workflows/ci.yml`:
+```yaml
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[dev]'
+      - run: ruff check src tests
+      - run: mypy src
+      - run: pytest -v
+```
+
+`agentic-kgcs/.github/workflows/ci.yml` (installs the sibling from GitHub; requires `CONSTELLATION_PAT` secret — vttsi pattern, spec §10.2):
+```yaml
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "git+https://x-access-token:${{ secrets.CONSTELLATION_PAT }}@github.com/djjay0131/agentic-kgis.git"
+      - run: pip install -e '.[dev]'
+      - run: ruff check src tests
+      - run: pytest -v
+```
+
+- [ ] **Step 6: Cross-repo verification test in agentic-kgcs**
+
+`agentic-kgcs/tests/test_contracts_available.py`:
+```python
+from kg_contracts import AdjudicationRoute, CandidateScores, ConfidencePolicy
+from kg_contracts.stores import CandidateSink, GraphMutationStore
+from kg_contracts.testing.contract import (
+    CandidateSinkContract,
+    GraphMutationStoreContract,
+)
+from kg_contracts.testing.memory import MemoryCandidateSink, MemoryGraphStore
+
+
+class TestSinkUsableFromKgcs(CandidateSinkContract):
+    def make_sink(self) -> CandidateSink:
+        return MemoryCandidateSink()
+
+
+class TestStoreUsableFromKgcs(GraphMutationStoreContract):
+    def make_store(self) -> GraphMutationStore:
+        return MemoryGraphStore()
+
+
+def test_policy_available() -> None:
+    scores = CandidateScores(extraction_confidence=0.99,
+                             source_reliability=0.99,
+                             identity_confidence=0.99)
+    assert ConfidencePolicy().route(scores) is AdjudicationRoute.AUTO
+```
+
+```bash
+cd /Users/djjay0131/code/agentic-kgcs
+.venv/bin/pip install -e ../agentic-kgis   # refresh editable install
+.venv/bin/pytest -v
+```
+Expected: packaging test + both contract suites + policy test all pass.
+
+- [ ] **Step 7: Update memory banks and commit both repos**
+
+`agentic-kgis/llm/memory_bank/activeContext.md`: current work = Plan 1 v2 complete; next = Plan 2 (candidate ledger + evidence registry). `progress.md`: add dated entry — kg_contracts v2 complete (identity, evidence, nine-variant candidates with four implemented, bitemporal assertions, derivation, policy, two-level stores, curation contracts, registry, memory adapters + contract suites, CI). `agentic-kgcs` memory bank: bootstrapped with packaging + cross-repo contract verification; implementation starts Plan 3 (curation core + executor).
+
+```bash
+cd /Users/djjay0131/code/agentic-kgis
+git add src/kg_contracts/__init__.py tests .github llm pyproject.toml
+git commit -m "feat(contracts): public API v2, quality gate, CI"
+
+cd /Users/djjay0131/code/agentic-kgcs
+git add tests .github llm
+git commit -m "test: verify kg_contracts v2 consumable from kgcs; add CI"
+```
+
+---
+
+## Plan 1 v2 Definition of Done
+
+- Both repos install editable and run their full test suites green; `agentic-kgis` ships importable `kg_contracts`, `kgis`, `kg_eval` (ADR-0002 as amended)
+- `agentic-kgis`: `pytest`, `ruff check`, `mypy src` (strict) all green; `kg_contracts` public API exports everything in Task 19's test
+- All nine candidate variants are defined and union-dispatchable; exactly `{entity, relation, attribute_assertion, artifact}` are fully validated; the other five carry `SPEC-LEVEL` docstrings (A2/D2)
+- No contract anywhere carries a single `confidence` float; no consumer-facing protocol exposes raw graph writes; no `PROVISIONAL` value exists in `CurationStatus` (ADR-0006/0010 verified by tests)
+- Bare `Label:key` parsing fails loudly with the ADR-0008 deprecation message
+- `agentic-kgcs`: imports `kg_contracts`, runs the `CandidateSinkContract` and `GraphMutationStoreContract` suites green against the memory adapters
+- Memory banks in both repos reflect Plan 1 v2 completion; Plan 2 (candidate ledger + evidence registry) can begin with no further scaffolding
