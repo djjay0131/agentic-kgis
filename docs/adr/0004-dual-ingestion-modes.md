@@ -1,6 +1,6 @@
 # ADR-0004: Both ingestion modes in v1 (structured sync + LLM extraction)
 
-Status: Accepted
+Status: Accepted (amended 2026-07-10)
 Date: 2026-07-08
 
 ## Context
@@ -55,13 +55,43 @@ Defers the hardest, most-repeated need across research projects.
 - [x] AI architecture
 - [x] Implementation
 
+## Amended 2026-07-10
+
+Per the approved disposition of external review PR #1 (A2, A8):
+
+- **`CandidateScores` replaces the single `confidence` float.** Both modes
+  emit candidates carrying the score set `{extraction_confidence,
+  identity_confidence, assertion_confidence, source_reliability,
+  corroboration_score, policy_risk}`. A single confidence conflates
+  "did we read the source correctly" with "is the fact true" — an exact
+  database import is not proof the database's fact is correct.
+- The Decision's clause "structured sync at confidence 1.0" is dead.
+  Structured sync records high extraction confidence and method
+  determinism (`Derivation`), while source reliability and authority are
+  scored separately. Consequently this amendment supersedes ADR-0003's
+  entry-policy implication in the clause "sub-1.0-confidence entities land
+  `PROVISIONAL`" — i.e., that confidence-1.0 structured syncs enter
+  `ACTIVE` directly. Entry policy now evaluates the score set (extraction
+  certainty vs. source reliability vs. authority); deterministic sync is
+  no longer auto-`ACTIVE`.
+- `Candidate` is now a discriminated union of nine variants sharing a
+  `CandidateEnvelope` (spec v2 §5.2); both modes still converge on the one
+  candidate seam, submitted via `CandidateSink` (ADR-0010) rather than "the
+  KGCS gate" wrapper. The dual-mode decision itself is unchanged.
+
 ## Related Documents
 
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §2.2, §6
+- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §2.2, §5.2, §5.5, §6 (v2)
+- `docs/ai/chatgpt-feedback-2026-07.md` (Response 2 §3, §8)
+- `docs/ai/chatgpt-feedback-disposition.md` (A2, A8; Consequences §3)
+- PR #1 (external design review capture + disposition)
 
 ## Supersedes
 
-None.
+ADR-0003, in part (via the 2026-07-10 amendment) — the entry-policy
+implication of the clause "sub-1.0-confidence entities land
+`PROVISIONAL`": that confidence-1.0 structured syncs enter `ACTIVE`.
+Entry policy now uses the `CandidateScores` set.
 
 ## Superseded By
 
