@@ -11,9 +11,13 @@
   Spec v2 + ADRs 0006–0010 + amendments written by chief-architect agent.
   Plan 1 (2026-07-09) obsoleted — rewrite pending after PR #1 merge.
 
-Works: nothing built yet (docs/governance only).
-Not built yet: all of kg_contracts + kgis (Plan 1+3), all of KGCS
-(Plans 2/4/5).
+Works: kg_contracts v2 complete — identity, evidence, nine-variant
+candidates (four implemented: entity, relation, attribute_assertion,
+artifact), bitemporal assertions, derivation, policy, two-level stores,
+curation contracts, registry, memory adapters + reusable contract
+suites, public API surface, CI.
+Not built yet: candidate ledger + evidence registry (Plan 2); kgis
+ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
 - 2026-07-12: PR #1 (spec v2 cycle) merged by owner. Governance upgraded
   to agentic-governance v0.2 (levels L0-L3, workflow-selection, steward
   INACTIVE) via delta upgrade PR.
