@@ -125,4 +125,9 @@ survives; provisional data now lives in the candidate ledger.
 
 ## Superseded By
 
-None.
+ADR-0011, in part — the `include_provisional` field of the `GraphReadOptions`
+record specified in this ADR's Decision section. Canonical reads are now
+canonical-only, and ledger visibility is a separate `LedgerReader` surface. The
+three-store separation, curation epochs, and every other `GraphReadOptions`
+field stand unchanged; ADR-0011 follows directly from this ADR's own "never one
+access path" principle.

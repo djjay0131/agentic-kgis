@@ -1,6 +1,22 @@
 # Active Context — agentic-kgis
 
-Update 2026-07-10: External design review (ChatGPT) dispositioned
+Update 2026-07-12: **Plan 1 v2 complete.** `kg_contracts` public API v2
+shipped (Tasks 3–18 implemented, Task 19 wired the top-level export
+surface): security context/deletion semantics, evidence, immutable
+identity, derivation provenance, contract/component versioning, the
+nine-variant candidate union (four implemented — entity, relation,
+attribute_assertion, artifact — five spec-level), bitemporal assertions
+and canonical entities, the confidence policy, two-level (candidate
+sink / graph mutation) store protocols, curation-plane contracts,
+ingestion protocols, the graph registry, and memory adapters + reusable
+contract suites (`kg_contracts.testing`). `pytest`, `ruff check`,
+`mypy src` (strict) all green in agentic-kgis; CI wired
+(`.github/workflows/ci.yml`). Cross-repo verified: agentic-kgcs installs
+`kg_contracts` editable and runs the `CandidateSinkContract` and
+`GraphMutationStoreContract` suites green against the memory adapters.
+NEXT: Plan 2 (candidate ledger + evidence registry).
+
+Prior state (2026-07-10): External design review (ChatGPT) dispositioned
 (chief-reviewer-checked, owner-approved) → **spec v2** + ADRs 0006–0010 +
 amendments to 0002/0004/0005 (0003 superseded in part) + delta amendment,
 all on PR #1. Key changes: candidate ledger / canonical graph / derived
