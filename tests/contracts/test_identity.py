@@ -70,6 +70,28 @@ def test_free_text_rejected_naming_offender():
         EntityRef.parse("Main St & 1st")  # agentic-tskg failure mode
 
 
+def test_trailing_newline_identity_id_rejected():
+    # `$` alone also matches before a trailing newline in Python re;
+    # the patterns must use fullmatch so "...\n" is rejected, not coerced.
+    iid_nl = new_identity_id("baseball") + "\n"
+    assert not is_identity_id(iid_nl)
+    with pytest.raises(IdentityError, match="baseball"):
+        parse_identity_id(iid_nl)
+
+
+def test_trailing_newline_graph_id_rejected():
+    with pytest.raises(IdentityError, match="baseball"):
+        new_identity_id("baseball\n")
+
+
+def test_identity_link_rejects_trailing_newline_endpoint():
+    a = new_identity_id("baseball")
+    b = new_identity_id("traffic") + "\n"
+    with pytest.raises(ValidationError, match="identity"):
+        IdentityLink(left_identity=a, right_identity=b,
+                     kind=IdentityLinkKind.SAME_AS, authority="x", provenance=PROV)
+
+
 def test_identity_link_valid_cross_graph():
     a = new_identity_id("baseball")
     b = new_identity_id("agentic-kg")

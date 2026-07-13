@@ -23,12 +23,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from kg_contracts._ulid import new_ulid
 from kg_contracts.evidence import Provenance
 
-_GRAPH_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
-_IDENTITY_ID_RE = re.compile(
-    r"^kg://(?P<graph_id>[a-z][a-z0-9-]*)/identity/(?P<ulid>[0-9A-Z]{26})$"
-)
-_ENTITY_TYPE_RE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
-_NAMESPACE_RE = re.compile(r"^[a-z][a-z0-9_.-]*$")
+# Checked with .fullmatch() — `$` alone also matches just before a trailing
+# newline in Python re, which would let "baseball\n" mint a corrupted ID.
+_GRAPH_ID_RE = re.compile(r"[a-z][a-z0-9-]*")
+_IDENTITY_ID_RE = re.compile(r"kg://(?P<graph_id>[a-z][a-z0-9-]*)/identity/(?P<ulid>[0-9A-Z]{26})")
+
+# Plain pattern strings: consumed by pydantic Field(pattern=...), which
+# anchors/validates with its own engine — no compiled object needed here.
+_ENTITY_TYPE_PATTERN = r"^[A-Z][A-Za-z0-9]*$"
+_NAMESPACE_PATTERN = r"^[a-z][a-z0-9_.-]*$"
 
 
 class IdentityError(ValueError):
@@ -37,19 +40,21 @@ class IdentityError(ValueError):
 
 def new_identity_id(graph_id: str) -> str:
     """Mint a new immutable identity ID: `kg://<graph-id>/identity/<ulid>`."""
-    if not _GRAPH_ID_RE.match(graph_id):
-        raise IdentityError(f"invalid graph_id {graph_id!r}: must match {_GRAPH_ID_RE.pattern}")
+    if not _GRAPH_ID_RE.fullmatch(graph_id):
+        raise IdentityError(
+            f"invalid graph_id {graph_id!r}: must fully match {_GRAPH_ID_RE.pattern}"
+        )
     return f"kg://{graph_id}/identity/{new_ulid()}"
 
 
 def is_identity_id(value: str) -> bool:
     """Return True iff `value` is a well-formed identity ID."""
-    return bool(_IDENTITY_ID_RE.match(value))
+    return bool(_IDENTITY_ID_RE.fullmatch(value))
 
 
 def parse_identity_id(value: str) -> tuple[str, str]:
     """Parse an identity ID into `(graph_id, ulid)`, or raise `IdentityError`."""
-    match = _IDENTITY_ID_RE.match(value)
+    match = _IDENTITY_ID_RE.fullmatch(value)
     if match is None:
         raise IdentityError(f"not a valid identity id: {value!r}")
     return match.group("graph_id"), match.group("ulid")
@@ -66,8 +71,8 @@ class EntityRef(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    entity_type: str = Field(pattern=_ENTITY_TYPE_RE.pattern)
-    namespace: str = Field(pattern=_NAMESPACE_RE.pattern)
+    entity_type: str = Field(pattern=_ENTITY_TYPE_PATTERN)
+    namespace: str = Field(pattern=_NAMESPACE_PATTERN)
     key: str
 
     @model_validator(mode="after")
