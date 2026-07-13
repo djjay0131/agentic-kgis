@@ -115,6 +115,11 @@ def test_evidence_ref_relationships():
     }
 
 
+def test_provenance_rejects_unknown_field():
+    with pytest.raises(ValidationError):
+        Provenance(source="s", actor="a", bogus=1)  # type: ignore[call-arg]
+
+
 def test_constructor_helpers_and_deterministic_ids():
     from kg_contracts.evidence import absent_evidence, present_evidence
 

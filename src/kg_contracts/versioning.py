@@ -54,7 +54,7 @@ class VersionChange(BaseModel):
     no prior version for a fresh component to be incompatible with.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     component_kind: VersionedComponentKind
     component_name: str = Field(min_length=1)

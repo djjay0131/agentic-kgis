@@ -69,7 +69,7 @@ class EntityRef(BaseModel):
     instances, not their string rendering.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     entity_type: str = Field(pattern=_ENTITY_TYPE_PATTERN)
     namespace: str = Field(pattern=_NAMESPACE_PATTERN)
@@ -127,7 +127,7 @@ class IdentityLink(BaseModel):
     resolution layer that produces links, not here).
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     link_id: str = Field(default_factory=lambda: "il_" + new_ulid())
     left_identity: str

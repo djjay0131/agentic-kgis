@@ -14,9 +14,14 @@ valid time (when the fact is true in the world), while `recorded_at` /
 `superseded_at` are transaction time (when the system learned or retired
 it). Curation status attaches at the assertion level, not only the whole
 entity, so an entity can be certain while one of its properties is
-uncertain (spec §5.4). Records are immutable — supersession is performed
-by writing a new record and setting `superseded_at` on a copy of the old
-one; that write is owned by KGCS executors (Plan 3), not by this contract.
+uncertain (spec §5.4). Immutability here is attribute-level only:
+`frozen=True` blocks reassigning a field after construction but cannot
+stop in-place mutation of a mutable field's contents (e.g. a `dict`/`list`
+value). Supersession is performed by writing a new record and setting
+`superseded_at` on a copy of the old one; that write is owned by KGCS
+executors (Plan 3), not by this contract. Immutability of accepted records
+at rest (append-only, no in-place edits) is likewise the ledger/store
+layer's responsibility (Plan 2/3), not these models'.
 
 `authority` (who is entitled to assert this) is recorded separately from
 every score in `CandidateScores` (spec §7.5): a deterministic sync at high
@@ -97,9 +102,11 @@ class Assertion(BaseModel):
     `object_value`, relation-style facts point at another identity via
     `object_identity` (which must itself be a well-formed identity id).
     `authority` (who is entitled to assert this) is separate from every
-    field on `scores`. Records are immutable; supersession writes a new
-    record via a copy with `superseded_at` set, performed by KGCS
-    executors (Plan 3), not by this contract.
+    field on `scores`. Immutability here is attribute-level (fields cannot be
+    reassigned after construction); supersession writes a new record via a
+    copy with `superseded_at` set, performed by KGCS executors (Plan 3), not
+    by this contract. Append-only immutability of records at rest is the
+    ledger/store layer's responsibility (Plan 2/3), not this model's.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

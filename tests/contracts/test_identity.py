@@ -43,6 +43,12 @@ def test_entity_ref_valid_and_renders_namespaced():
     assert ref.render() == "Paper:doi:10.1145/3292500"
 
 
+def test_entity_ref_rejects_unknown_field():
+    with pytest.raises(ValidationError):
+        EntityRef(entity_type="Paper", namespace="doi", key="x",
+                  bogus=1)  # type: ignore[call-arg]
+
+
 def test_entity_ref_key_may_contain_colons():
     ref = EntityRef.parse("Doc:arxiv:2501.1234:v2")
     assert (ref.entity_type, ref.namespace, ref.key) == ("Doc", "arxiv", "2501.1234:v2")

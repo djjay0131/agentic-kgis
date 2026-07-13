@@ -37,3 +37,8 @@ def test_policy_context_stub_defaults_and_frozen():
 def test_policy_context_requires_actor():
     with pytest.raises(ValidationError):
         PolicyContext()  # type: ignore[call-arg]
+
+
+def test_policy_context_rejects_unknown_field():
+    with pytest.raises(ValidationError):
+        PolicyContext(actor="ingest-pipeline", bogus=1)  # type: ignore[call-arg]

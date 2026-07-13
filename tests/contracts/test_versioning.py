@@ -33,6 +33,18 @@ def test_introduction_must_be_backward_compatible():
         )
 
 
+def test_version_change_rejects_unknown_field():
+    with pytest.raises(ValidationError):
+        VersionChange(
+            component_kind=VersionedComponentKind.EXTRACTOR,
+            component_name="player-extractor",
+            from_version="1.2.0",
+            to_version="2.0.0",
+            compatibility=CompatibilityClass.REQUIRES_RE_EXTRACTION,
+            bogus=1,  # type: ignore[call-arg]
+        )
+
+
 def test_all_compatibility_classes_present():
     assert {c.value for c in CompatibilityClass} == {
         "BACKWARD_COMPATIBLE", "REQUIRES_CANDIDATE_REVALIDATION",

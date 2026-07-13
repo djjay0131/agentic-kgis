@@ -30,3 +30,10 @@ def test_derivation_frozen_and_carries_warnings():
     assert d.warnings[0].startswith("scale")
     with pytest.raises(ValidationError):
         d.method = "other"  # type: ignore[misc]
+
+
+def test_derivation_rejects_unknown_field():
+    with pytest.raises(ValidationError):
+        Derivation(method="wall-length", deterministic=True,
+                   inputs=(), implementation_version="v1",
+                   bogus=1)  # type: ignore[call-arg]

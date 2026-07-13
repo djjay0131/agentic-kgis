@@ -33,7 +33,7 @@ class PolicyContext(BaseModel):
     so later contracts don't need a breaking change to add it.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     actor: str
     tenant: str | None = None

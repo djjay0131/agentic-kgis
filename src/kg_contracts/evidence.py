@@ -36,7 +36,7 @@ class ValidPeriod(BaseModel):
     both are set.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     valid_from: datetime | None = None
     valid_to: datetime | None = None
@@ -55,7 +55,7 @@ class ValidPeriod(BaseModel):
 class Provenance(BaseModel):
     """Where a record came from. Never dropped."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     source: str
     source_ref: str | None = None
@@ -93,7 +93,7 @@ class Evidence(BaseModel):
     requires `error` and forbids `content`/`payload_hash`/`absence_reason`.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     evidence_id: str = Field(default_factory=lambda: "ev_" + new_ulid())
     source_type: str
@@ -149,7 +149,7 @@ class EvidenceRelationship(StrEnum):
 class EvidenceRef(BaseModel):
     """How a candidate/assertion cites evidence."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     evidence_id: str
     relationship: EvidenceRelationship

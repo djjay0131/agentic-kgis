@@ -29,7 +29,7 @@ class DerivationInput(BaseModel):
     and inferred-wall assertions to the source DWG artifact).
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: str
     ref: str
@@ -47,7 +47,7 @@ class Derivation(BaseModel):
     depends on has since changed incompatibly).
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     method: str = Field(min_length=1)
     deterministic: bool

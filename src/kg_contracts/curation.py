@@ -268,11 +268,14 @@ class ReviewQueue(Protocol):
 
 
 class AuditRecord(BaseModel):
-    """An immutable audit-stream entry for one applied operation (spec
-    §7.8).
+    """An audit-stream entry for one applied operation (spec §7.8).
 
-    The audit stream is the training corpus that later justifies raising
-    auto-promotion thresholds.
+    Immutability here is attribute-level only: `frozen=True` blocks
+    reassigning a field after construction but does not, by itself, make the
+    audit stream append-only at rest. That guarantee — no in-place edits or
+    deletions once written — is enforced by the ledger/store layer (Plan 2/3),
+    not by this model. The audit stream is the training corpus that later
+    justifies raising auto-promotion thresholds.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
