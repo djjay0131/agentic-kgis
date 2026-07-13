@@ -21,7 +21,7 @@ never a code change.
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kg_contracts.candidates import CandidateScores
 
@@ -34,24 +34,51 @@ class AdjudicationRoute(StrEnum):
     HUMAN = "HUMAN"
 
 
+# Route severity for choosing the more conservative of two candidate routes.
+# HUMAN is the most conservative (most oversight), AUTO the least.
+_ROUTE_SEVERITY: dict[AdjudicationRoute, int] = {
+    AdjudicationRoute.AUTO: 0,
+    AdjudicationRoute.LLM_ASSESS: 1,
+    AdjudicationRoute.HUMAN: 2,
+}
+
+
+def _more_conservative(a: AdjudicationRoute, b: AdjudicationRoute) -> AdjudicationRoute:
+    """Return whichever of `a`/`b` demands more oversight (HUMAN > LLM_ASSESS > AUTO)."""
+    return a if _ROUTE_SEVERITY[a] >= _ROUTE_SEVERITY[b] else b
+
+
 class ConfidencePolicy(BaseModel):
     """Config (not code) mapping a `CandidateScores` set to an `AdjudicationRoute`.
 
-    `route` applies, in order:
+    Every threshold is a field on this model — nothing about the routing
+    decision is a hardcoded literal, so automating (or tightening) a
+    decision later is a policy config change, never a code change.
 
-    1. `policy_risk > auto_max_policy_risk` never routes AUTO — a
-       high-consequence candidate goes to at least `LLM_ASSESS`, and above
-       0.5 to `HUMAN` regardless of how confident the other scores are.
-    2. AUTO additionally requires `extraction_confidence >=
-       auto_min_extraction` AND `source_reliability >=
-       auto_min_source_reliability` AND, when
-       `require_identity_confidence_for_auto` is set, `identity_confidence
-       >= auto_min_identity_confidence`. A **missing** `identity_confidence`
-       is not silently treated as good enough — honest-null blocks AUTO
-       rather than defaulting to pass.
-    3. Otherwise `LLM_ASSESS` if `extraction_confidence >=
-       assess_min_extraction`.
-    4. Otherwise `HUMAN`.
+    `route` computes two candidate routes and returns **the more
+    conservative of the two** (HUMAN > LLM_ASSESS > AUTO):
+
+    - the *policy-risk floor*, driven by `policy_risk`:
+      1. `policy_risk > human_min_policy_risk` → floor is `HUMAN`.
+      2. `policy_risk > auto_max_policy_risk` (moderate risk) → floor is
+         `LLM_ASSESS`: moderate-risk candidates can never route `AUTO`.
+      3. otherwise → floor is `AUTO` (risk imposes no restriction).
+    - the *extraction-based route*, driven by the confidence scores:
+      1. `AUTO` requires `extraction_confidence >= auto_min_extraction`
+         AND `source_reliability >= auto_min_source_reliability` AND, when
+         `require_identity_confidence_for_auto` is set, `identity_confidence
+         >= auto_min_identity_confidence`. A **missing** `identity_confidence`
+         is not silently treated as good enough — honest-null blocks `AUTO`
+         rather than defaulting to pass.
+      2. else `LLM_ASSESS` if `extraction_confidence >= assess_min_extraction`.
+      3. else `HUMAN`.
+
+    Taking the more conservative of the two means moderate risk never
+    *lowers* the route below what extraction alone would give: a
+    moderate-risk candidate with good extraction routes `LLM_ASSESS` (the
+    risk floor), but a moderate-risk candidate with extraction below
+    `assess_min_extraction` still escalates to `HUMAN` (the extraction
+    route wins). Moderate risk sets a floor, it does not cap escalation.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -60,6 +87,7 @@ class ConfidencePolicy(BaseModel):
     auto_min_extraction: float = 0.95
     auto_min_source_reliability: float = 0.90
     auto_max_policy_risk: float = 0.20
+    human_min_policy_risk: float = Field(default=0.5, ge=0.0, le=1.0)
     assess_min_extraction: float = 0.80
     require_identity_confidence_for_auto: bool = True
     auto_min_identity_confidence: float = 0.95
@@ -72,15 +100,24 @@ class ConfidencePolicy(BaseModel):
                 f"(got auto_min_extraction={self.auto_min_extraction!r}, "
                 f"assess_min_extraction={self.assess_min_extraction!r})"
             )
+        if self.human_min_policy_risk < self.auto_max_policy_risk:
+            raise ValueError(
+                "human_min_policy_risk must be ordered >= auto_max_policy_risk "
+                f"(got human_min_policy_risk={self.human_min_policy_risk!r}, "
+                f"auto_max_policy_risk={self.auto_max_policy_risk!r})"
+            )
         return self
 
-    def route(self, scores: CandidateScores) -> AdjudicationRoute:
-        """Route `scores` to an `AdjudicationRoute` per the ordered rules above."""
-        if scores.policy_risk > 0.5:
+    def _risk_floor(self, scores: CandidateScores) -> AdjudicationRoute:
+        """The least-conservative route `policy_risk` alone permits."""
+        if scores.policy_risk > self.human_min_policy_risk:
             return AdjudicationRoute.HUMAN
         if scores.policy_risk > self.auto_max_policy_risk:
             return AdjudicationRoute.LLM_ASSESS
+        return AdjudicationRoute.AUTO
 
+    def _extraction_route(self, scores: CandidateScores) -> AdjudicationRoute:
+        """The route the confidence scores alone would give, ignoring risk."""
         identity_ok = (not self.require_identity_confidence_for_auto) or (
             scores.identity_confidence is not None
             and scores.identity_confidence >= self.auto_min_identity_confidence
@@ -91,8 +128,12 @@ class ConfidencePolicy(BaseModel):
             and identity_ok
         ):
             return AdjudicationRoute.AUTO
-
         if scores.extraction_confidence >= self.assess_min_extraction:
             return AdjudicationRoute.LLM_ASSESS
-
         return AdjudicationRoute.HUMAN
+
+    def route(self, scores: CandidateScores) -> AdjudicationRoute:
+        """Route `scores` to the more conservative of risk floor and extraction route."""
+        return _more_conservative(
+            self._risk_floor(scores), self._extraction_route(scores)
+        )
