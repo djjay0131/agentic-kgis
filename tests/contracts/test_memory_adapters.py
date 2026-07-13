@@ -1,8 +1,11 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from kg_contracts.assertions import CurationStatus
 from kg_contracts.curation import CurationOperation, CurationOperationType
 from kg_contracts.stores import (
+    AdapterCapabilities,
     BulkGraphWriter,
     CandidateSink,
     GraphMutationBatch,
@@ -10,6 +13,7 @@ from kg_contracts.stores import (
     GraphReadOptions,
     GraphWriter,
     TransactionalGraphWriter,
+    UnsupportedCapabilityError,
 )
 from kg_contracts.testing.contract import (
     CandidateSinkContract,
@@ -19,6 +23,8 @@ from kg_contracts.testing.contract import (
 )
 from kg_contracts.testing.factories import make_assertion, make_entity, make_entity_candidate
 from kg_contracts.testing.memory import MemoryCandidateSink, MemoryGraphStore
+
+NOW = datetime(2026, 7, 12, tzinfo=UTC)
 
 
 class TestMemoryCandidateSink(CandidateSinkContract):
@@ -107,6 +113,41 @@ def test_memory_graph_store_mark_superseded_updates_stored_assertion():
     )
     assert stored.status is CurationStatus.SUPERSEDED
     assert stored.superseded_at == at
+
+
+class _NonTemporalMemoryGraphStore(MemoryGraphStore):
+    """A MemoryGraphStore that declares NO temporal-query support.
+
+    Proves the capability-conformance contract works in both directions:
+    the real store hardcodes supports_temporal_queries=True (so its
+    temporal path always succeeds), but the raise branch guarding an
+    undeclared capability must still fire for an adapter that says False.
+    """
+
+    def capabilities(self) -> AdapterCapabilities:
+        return AdapterCapabilities(supports_temporal_queries=False)
+
+
+def test_non_temporal_store_raises_unsupported_capability_for_temporal_options():
+    store = _NonTemporalMemoryGraphStore()
+    entity = make_entity()
+    store.apply(
+        GraphMutationBatch(
+            plan_id="pl_1",
+            operations=(
+                CurationOperation(
+                    type=CurationOperationType.CREATE_IDENTITY,
+                    payload=entity.model_dump(mode="python"),
+                ),
+            ),
+        ),
+        preconditions=(),
+    )
+
+    with pytest.raises(UnsupportedCapabilityError):
+        store.assertions_for(entity.identity_id, options=GraphReadOptions(valid_at=NOW))
+    with pytest.raises(UnsupportedCapabilityError):
+        store.assertions_for(entity.identity_id, options=GraphReadOptions(transaction_at=NOW))
 
 
 def test_memory_graph_store_other_five_operation_types_raise_not_implemented_plan_3():

@@ -299,6 +299,75 @@ class GraphMutationStoreContract:
         )
         assert outside == []
 
+    def test_transaction_at_filters_by_half_open_recorded_superseded_window(self) -> None:
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        store.apply(
+            GraphMutationBatch(plan_id="pl_1", operations=(_create_identity_op(entity),)),
+            preconditions=(),
+        )
+        caps = store.capabilities()
+
+        # An active assertion recorded at NOW, never superseded.
+        active = make_assertion(
+            subject_identity=entity.identity_id, predicate="height_cm", recorded_at=NOW
+        )
+        # A superseded assertion whose transaction-time window is
+        # [NOW - 2d, NOW): recorded earlier, retired at NOW.
+        retired = make_assertion(
+            subject_identity=entity.identity_id,
+            predicate="weight_kg",
+            object_value=90,
+            status=CurationStatus.SUPERSEDED,
+            recorded_at=NOW - timedelta(days=2),
+            superseded_at=NOW,
+        )
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_2",
+                operations=(_attach_assertion_op(active), _attach_assertion_op(retired)),
+            ),
+            preconditions=(),
+        )
+
+        if not caps.supports_temporal_queries:
+            with pytest.raises(UnsupportedCapabilityError):
+                store.assertions_for(
+                    entity.identity_id, options=GraphReadOptions(transaction_at=NOW)
+                )
+            return
+
+        # Before the active assertion's recorded_at: not yet in the graph.
+        before = store.assertions_for(
+            entity.identity_id, options=GraphReadOptions(transaction_at=NOW - timedelta(days=1))
+        )
+        assert [a.assertion_id for a in before] == []
+
+        # At/after recorded_at: the active assertion is visible (window is
+        # half-open at the recorded_at end, i.e. transaction_at >= recorded_at).
+        at_now = store.assertions_for(
+            entity.identity_id, options=GraphReadOptions(transaction_at=NOW)
+        )
+        assert [a.assertion_id for a in at_now] == [active.assertion_id]
+
+        # Inside the retired assertion's [recorded_at, superseded_at) window,
+        # with include_superseded to see past the status filter: visible.
+        inside_retired = store.assertions_for(
+            entity.identity_id,
+            options=GraphReadOptions(
+                transaction_at=NOW - timedelta(days=1), include_superseded=True
+            ),
+        )
+        assert {a.assertion_id for a in inside_retired} == {retired.assertion_id}
+
+        # At/after superseded_at the retired assertion drops out of the
+        # transaction-time view (half-open at the superseded_at end).
+        at_superseded = store.assertions_for(
+            entity.identity_id,
+            options=GraphReadOptions(transaction_at=NOW, include_superseded=True),
+        )
+        assert retired.assertion_id not in {a.assertion_id for a in at_superseded}
+
 
 class ReviewQueueContract:
     """Subclass and implement `make_queue()` (spec §10.2)."""
