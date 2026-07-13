@@ -17,3 +17,12 @@ Not built yet: all of kg_contracts + kgis (Plan 1+3), all of KGCS
 - 2026-07-12: PR #1 (spec v2 cycle) merged by owner. Governance upgraded
   to agentic-governance v0.2 (levels L0-L3, workflow-selection, steward
   INACTIVE) via delta upgrade PR.
+- 2026-07-12: Plan 1 v2 executed (19 SDD tasks) — `kg_contracts` v2
+  complete: identity, evidence, nine-variant candidates (four
+  implemented: entity, relation, attribute_assertion, artifact),
+  bitemporal assertions, derivation, policy, two-level stores, curation
+  contracts, registry, memory adapters + contract suites, CI. Public API
+  surface wired in `src/kg_contracts/__init__.py`; `pytest`,
+  `ruff check`, `mypy src` (strict) all green; cross-repo consumability
+  verified from agentic-kgcs (`CandidateSinkContract` +
+  `GraphMutationStoreContract` suites pass against memory adapters).
