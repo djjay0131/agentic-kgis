@@ -58,8 +58,8 @@ class Provenance(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     source: str
-    actor: str
     source_ref: str | None = None
+    actor: str
     model: str | None = None
     prompt_version: str | None = None
 
@@ -96,13 +96,13 @@ class Evidence(BaseModel):
     source_type: str
     source_locator: str
     observed_at: datetime
-    availability: EvidenceAvailability
-    provenance: Provenance
     valid_time: ValidPeriod | None = None
+    availability: EvidenceAvailability
     absence_reason: AbsenceReason | None = None
     payload_hash: str | None = None
     content: str | None = None
     error: str | None = None
+    provenance: Provenance
 
     @model_validator(mode="after")
     def _check_availability_shape(self) -> "Evidence":
