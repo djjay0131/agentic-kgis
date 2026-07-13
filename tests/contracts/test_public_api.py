@@ -25,9 +25,10 @@ def test_top_level_exports() -> None:
         CurationStatus,
         # policy (T12)
         AdjudicationRoute, ConfidencePolicy,
-        # stores (T13, T15)
+        # stores (T13, T15; ledger read surface ADR-0011)
         AdapterCapabilities, CandidateSink, CommitResult, GraphMutationBatch,
-        GraphMutationStore, GraphReader, GraphReadOptions, SubmissionOutcome,
+        GraphMutationStore, GraphReader, GraphReadOptions, LedgerEntry,
+        LedgerReader, LedgerReadOptions, SubmissionOutcome,
         SubmissionResult, SubmissionStatus, TemporalGraphReader,
         UnsupportedCapabilityError,
         # curation (T14)

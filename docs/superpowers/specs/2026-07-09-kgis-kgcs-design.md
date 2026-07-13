@@ -116,17 +116,25 @@ graph's visible curation watermark → rebuild or invalidate affected derived
 projections. Readers consume a published epoch, never "whatever is present", so one
 query can never observe a partially promoted batch.
 
-All graph reads take explicit consistency options:
+All *canonical-graph* reads take explicit consistency options:
 
 ```
 GraphReadOptions:
   curation_epoch          # snapshot/watermark to read at
   valid_at                # domain (valid-time) point
   transaction_at          # system (transaction-time) point
-  include_provisional     # opt-in ledger visibility (default: canonical only)
   include_superseded
   minimum_evidence_policy
 ```
+
+There is deliberately no ledger-visibility flag on the canonical read surface
+(corrected by ADR-0011; the original draft carried an `include_provisional`
+option). Under this section's own three-store separation the canonical graph
+holds only accepted records and the stores "never [share] one access path", so a
+provisional-visibility flag on `GraphReader` would make the canonical reader an
+access path into the ledger — the leak the separation exists to prevent. Ledger
+visibility is a *separate* read surface, `LedgerReader`/`LedgerReadOptions`,
+which returns candidate rows with their ledger `ProcessingState`.
 
 Without this contract, every project would invent inconsistent status filters. GraphRAG
 and other projection builders default to canonical-only reads at a published epoch.

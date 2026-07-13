@@ -20,8 +20,9 @@ rewrite.
 | [0003](0003-layered-write-path.md) | Layered write path: inline deterministic gate + async probabilistic curation | Accepted (superseded in part — see ADRs 0006, 0007, 0010 and ADR-0004 amendment) |
 | [0004](0004-dual-ingestion-modes.md) | Both ingestion modes in v1 (structured sync + LLM extraction) | Accepted (amended 2026-07-10: CandidateScores replaces single confidence) |
 | [0005](0005-graph-registry-and-advisor.md) | Graph registry + extend-vs-new advisor, human-gated with automation path | Accepted (amended 2026-07-10: 12 factors, four outcome architectures) |
-| [0006](0006-three-store-separation.md) | Three-store separation: candidate ledger / canonical graph / derived projections, with curation epochs | Accepted |
+| [0006](0006-three-store-separation.md) | Three-store separation: candidate ledger / canonical graph / derived projections, with curation epochs | Accepted (superseded in part by ADR-0011: the `GraphReadOptions.include_provisional` field) |
 | [0007](0007-entity-resolution-architecture.md) | Entity-resolution architecture: calibrated pipeline, bounded LLM adviser, deterministic policy gate | Accepted |
 | [0008](0008-identity-model.md) | Identity model: immutable internal identity IDs plus namespaced aliases | Accepted |
 | [0009](0009-kg-eval-and-honest-null.md) | kg_eval package and the honest-null policy | Accepted |
 | [0010](0010-write-path-mechanism.md) | Write-path mechanism: pure curation core, plan-applying executor, two-level store contracts | Accepted |
+| [0011](0011-canonical-reads-are-canonical-only.md) | Canonical reads are canonical-only; ledger visibility is a separate read surface | Accepted (supersedes ADR-0006 in part) |

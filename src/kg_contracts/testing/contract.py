@@ -22,6 +22,7 @@ from kg_contracts.curation import (
     CurationOperation,
     CurationOperationType,
     Precondition,
+    ProcessingState,
     ReviewAction,
     ReviewDecision,
     ReviewItem,
@@ -33,6 +34,8 @@ from kg_contracts.stores import (
     GraphMutationBatch,
     GraphMutationStore,
     GraphReadOptions,
+    LedgerReader,
+    LedgerReadOptions,
     SubmissionStatus,
     TemporalGraphReader,
     UnsupportedCapabilityError,
@@ -145,6 +148,73 @@ class CandidateSinkContract:
             SubmissionStatus.RECEIVED: 2,
             SubmissionStatus.DUPLICATE: 1,
         }
+
+
+@runtime_checkable
+class _TestableLedger(CandidateSink, LedgerReader, Protocol):
+    """Type-only union: a candidate ledger is *written* via `CandidateSink`
+    and *read* via `LedgerReader` — two separate protocols over one store
+    (ADR-0006, ADR-0011). `make_ledger()` is typed `-> CandidateSink` (the
+    write port); the suite `cast`s to this union to exercise reads, exactly
+    as `GraphMutationStoreContract` does for the canonical store.
+    """
+
+
+def _as_ledger(sink: CandidateSink) -> _TestableLedger:
+    return cast(_TestableLedger, sink)
+
+
+class LedgerReaderContract:
+    """Subclass and implement `make_ledger()` (spec §10.2, ADR-0011).
+
+    Validates the *separate* ledger read surface: any store that is both a
+    `CandidateSink` and a `LedgerReader` must round-trip received candidates
+    through the ledger read path with their `ProcessingState`, honor the
+    state/graph filters, and never leak that data through a canonical
+    `GraphReader` (the last is guaranteed structurally by the protocol
+    split, tested in `test_stores_read.py`).
+    """
+
+    def make_ledger(self) -> CandidateSink:
+        raise NotImplementedError
+
+    def test_received_candidate_appears_in_ledger_with_received_state(self) -> None:
+        ledger = _as_ledger(self.make_ledger())
+        candidate = make_entity_candidate(key="lr-1")
+        ledger.submit([candidate])
+        entries = ledger.ledger_entries()
+        assert [e.candidate.candidate_id for e in entries] == [candidate.candidate_id]
+        assert entries[0].processing_state is ProcessingState.RECEIVED
+        assert entries[0].received_at == candidate.created_at
+
+    def test_ledger_entry_lookup_by_candidate_id(self) -> None:
+        ledger = _as_ledger(self.make_ledger())
+        candidate = make_entity_candidate(key="lr-2")
+        ledger.submit([candidate])
+        found = ledger.ledger_entry(candidate.candidate_id)
+        assert found is not None
+        assert found.candidate.candidate_id == candidate.candidate_id
+        assert ledger.ledger_entry("cand_does_not_exist") is None
+
+    def test_processing_state_filter_excludes_non_matching_states(self) -> None:
+        ledger = _as_ledger(self.make_ledger())
+        ledger.submit([make_entity_candidate(key="lr-3")])
+        # Received candidates sit in RECEIVED; filtering to another state hides them.
+        hidden = ledger.ledger_entries(
+            LedgerReadOptions(processing_states=(ProcessingState.REVIEW_PENDING,))
+        )
+        assert hidden == []
+        shown = ledger.ledger_entries(
+            LedgerReadOptions(processing_states=(ProcessingState.RECEIVED,))
+        )
+        assert len(shown) == 1
+
+    def test_graph_id_filter_scopes_entries(self) -> None:
+        ledger = _as_ledger(self.make_ledger())
+        ledger.submit([make_entity_candidate(graph_id="g1", key="x")])
+        ledger.submit([make_entity_candidate(graph_id="g2", key="y")])
+        scoped = ledger.ledger_entries(LedgerReadOptions(graph_id="g1"))
+        assert [e.candidate.graph_id for e in scoped] == ["g1"]
 
 
 class GraphMutationStoreContract:

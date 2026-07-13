@@ -10,14 +10,17 @@ from kg_contracts.stores import (
     CandidateSink,
     GraphMutationBatch,
     GraphMutationStore,
+    GraphReader,
     GraphReadOptions,
     GraphWriter,
+    LedgerReader,
     TransactionalGraphWriter,
     UnsupportedCapabilityError,
 )
 from kg_contracts.testing.contract import (
     CandidateSinkContract,
     GraphMutationStoreContract,
+    LedgerReaderContract,
     MemoryReviewQueue,
     ReviewQueueContract,
 )
@@ -40,6 +43,28 @@ class TestMemoryGraphStore(GraphMutationStoreContract):
 class TestMemoryReviewQueue(ReviewQueueContract):
     def make_queue(self) -> MemoryReviewQueue:
         return MemoryReviewQueue()
+
+
+class TestMemoryLedgerReader(LedgerReaderContract):
+    def make_ledger(self) -> CandidateSink:
+        return MemoryCandidateSink()
+
+
+# --- ADR-0011: the memory ledger store is both a CandidateSink (write) and a
+# LedgerReader (read), two separate surfaces; the canonical MemoryGraphStore is
+# neither a ledger reader nor is the ledger a canonical GraphReader.
+
+
+def test_memory_candidate_sink_implements_ledger_reader():
+    assert isinstance(MemoryCandidateSink(), LedgerReader)
+
+
+def test_memory_graph_store_is_not_a_ledger_reader():
+    assert not isinstance(MemoryGraphStore(), LedgerReader)
+
+
+def test_memory_candidate_sink_is_not_a_canonical_graph_reader():
+    assert not isinstance(MemoryCandidateSink(), GraphReader)
 
 
 # --- Owner ruling R2: MemoryGraphStore's apply() internally composes the

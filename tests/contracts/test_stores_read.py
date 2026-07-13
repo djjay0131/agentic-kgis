@@ -5,12 +5,16 @@ from pydantic import ValidationError
 
 from kg_contracts.assertions import Assertion, CanonicalEntity
 from kg_contracts.identity import EntityRef
+from kg_contracts.curation import ProcessingState
 from kg_contracts.stores import (
     AdapterCapabilities,
     BulkGraphWriter,
     GraphReader,
     GraphReadOptions,
     GraphWriter,
+    LedgerEntry,
+    LedgerReader,
+    LedgerReadOptions,
     TransactionalGraphWriter,
     UnsupportedCapabilityError,
 )
@@ -20,8 +24,17 @@ def test_graph_read_options_defaults_canonical_only_at_latest_published_epoch():
     # curation_epoch None = latest *published* epoch; canonical-only by default.
     opts = GraphReadOptions()
     assert opts.curation_epoch is None
-    assert opts.include_provisional is False
     assert opts.include_superseded is False
+
+
+def test_graph_read_options_has_no_ledger_visibility_option():
+    # ADR-0011: the canonical read surface exposes no way to see ledger
+    # (provisional) records. The old include_provisional flag is gone, and
+    # extra="forbid" makes reintroducing it as a read option unrepresentable
+    # rather than a silently-ignored kwarg.
+    assert "include_provisional" not in GraphReadOptions.model_fields
+    with pytest.raises(ValidationError):
+        GraphReadOptions(include_provisional=True)  # type: ignore[call-arg]
 
 
 def test_adapter_capabilities_defaults_all_false_and_frozen():
@@ -130,3 +143,56 @@ class _FakeBulkWriter(_FakeWriter):
 
 def test_duck_typed_fake_satisfies_bulk_graph_writer():
     assert isinstance(_FakeBulkWriter(), BulkGraphWriter)
+
+
+# --- ADR-0011: the candidate-ledger read surface is separate from the canonical
+# GraphReader. These prove the two access paths never collapse into one.
+
+
+def test_ledger_read_options_defaults_span_all_states_and_graphs():
+    opts = LedgerReadOptions()
+    assert opts.processing_states is None
+    assert opts.graph_id is None
+
+
+class _FakeLedgerReader:
+    """Duck-typed fake with LedgerReader's two methods, nothing else."""
+
+    def ledger_entries(
+        self, options: LedgerReadOptions = LedgerReadOptions()
+    ) -> list[LedgerEntry]:
+        return []
+
+    def ledger_entry(self, candidate_id: str) -> LedgerEntry | None:
+        return None
+
+
+def test_duck_typed_fake_satisfies_ledger_reader():
+    assert isinstance(_FakeLedgerReader(), LedgerReader)
+
+
+def test_ledger_reader_and_graph_reader_are_distinct_surfaces():
+    # A canonical GraphReader must not accidentally satisfy LedgerReader, and a
+    # LedgerReader must not satisfy GraphReader — the separation is structural,
+    # not a runtime flag (ADR-0006 "never one access path").
+    assert not isinstance(_FakeReader(), LedgerReader)
+    assert not isinstance(_FakeLedgerReader(), GraphReader)
+
+
+def test_graph_reader_exposes_no_ledger_surface():
+    # The canonical reader has no ledger method: uncertainty cannot be reached
+    # through a canonical query.
+    for name in ("ledger_entries", "ledger_entry"):
+        assert name not in dir(GraphReader)
+
+
+def test_ledger_reader_exposes_no_canonical_or_write_surface():
+    for name in ("get_entity", "find_entities", "assertions_for", "put_entity", "submit", "apply"):
+        assert name not in dir(LedgerReader)
+
+
+def test_processing_state_is_usable_as_a_ledger_filter():
+    # LedgerReadOptions filters on the ledger's own ProcessingState machine,
+    # never the canonical CurationStatus.
+    opts = LedgerReadOptions(processing_states=(ProcessingState.REVIEW_PENDING,))
+    assert opts.processing_states == (ProcessingState.REVIEW_PENDING,)

@@ -24,13 +24,15 @@ from typing import Sequence
 
 from kg_contracts.assertions import Assertion, CanonicalEntity, CurationStatus
 from kg_contracts.candidates import Candidate
-from kg_contracts.curation import CurationOperationType, Precondition
+from kg_contracts.curation import CurationOperationType, Precondition, ProcessingState
 from kg_contracts.identity import EntityRef
 from kg_contracts.stores import (
     AdapterCapabilities,
     CommitResult,
     GraphMutationBatch,
     GraphReadOptions,
+    LedgerEntry,
+    LedgerReadOptions,
     SubmissionOutcome,
     SubmissionResult,
     SubmissionStatus,
@@ -41,12 +43,23 @@ _TxnSnapshot = tuple[dict[str, CanonicalEntity], dict[str, list[Assertion]], dic
 
 
 class MemoryCandidateSink:
-    """Dict-backed candidate ledger keyed by `(graph_id, semantic_key)`.
+    """Dict-backed candidate ledger: `CandidateSink` write + `LedgerReader` read.
 
     Idempotency is by **semantic key**, never content hash (spec §5.8):
     the first submission for a given `(graph_id, semantic_key)` pair is
     `RECEIVED`; every later submission of that same pair is `DUPLICATE`,
     regardless of what changed in the payload or content hash.
+
+    One store, two *separate* access paths (ADR-0006, ADR-0011): `submit()`
+    is the `CandidateSink` write surface; `ledger_entries()` /
+    `ledger_entry()` are the `LedgerReader` read surface. They are distinct
+    protocols over the same backing dict — a canonical `GraphReader` can
+    never reach this data. This reference models only synchronous admission,
+    so every admitted candidate sits in `ProcessingState.RECEIVED`; the
+    async lifecycle transitions (VALIDATED, REVIEW_PENDING, ...) belong to
+    the ledger store built in Plan 2. `received_at` is taken from the
+    candidate's own `created_at`, keeping this test double clock-free and
+    deterministic.
     """
 
     def __init__(self) -> None:
@@ -84,6 +97,36 @@ class MemoryCandidateSink:
     def received(self) -> list[Candidate]:
         """Test helper: candidates actually admitted (RECEIVED), in order."""
         return list(self._received)
+
+    # --- LedgerReader (separate access path from any GraphReader) -------------
+
+    def _entry(self, candidate: Candidate) -> LedgerEntry:
+        return LedgerEntry(
+            candidate=candidate,
+            processing_state=ProcessingState.RECEIVED,
+            received_at=candidate.created_at,
+        )
+
+    def ledger_entries(
+        self, options: LedgerReadOptions = LedgerReadOptions()
+    ) -> list[LedgerEntry]:
+        entries: list[LedgerEntry] = []
+        for candidate in self._received:
+            if options.graph_id is not None and candidate.graph_id != options.graph_id:
+                continue
+            if (
+                options.processing_states is not None
+                and ProcessingState.RECEIVED not in options.processing_states
+            ):
+                continue
+            entries.append(self._entry(candidate))
+        return entries
+
+    def ledger_entry(self, candidate_id: str) -> LedgerEntry | None:
+        for candidate in self._received:
+            if candidate.candidate_id == candidate_id:
+                return self._entry(candidate)
+        return None
 
 
 class MemoryGraphStore:

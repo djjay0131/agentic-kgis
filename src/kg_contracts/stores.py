@@ -6,8 +6,10 @@ either too weak or too demanding once multiple backends, temporal curation,
 and rollback share it — v2 splits reader/writer protocols and declares
 capabilities (spec §3.3, §5.6-§5.7). No Cypher/GQL on core contracts.
 
-This module defines the read surface (`GraphReader`, `TemporalGraphReader`),
-capability declarations (`AdapterCapabilities`, `CapabilityDeclaring`), the
+This module defines the canonical-graph read surface (`GraphReader`,
+`TemporalGraphReader`), the *separate* candidate-ledger read surface
+(`LedgerReader` with `LedgerReadOptions` / `LedgerEntry`), capability
+declarations (`AdapterCapabilities`, `CapabilityDeclaring`), the
 adapter-internal writer protocols (`GraphWriter`, `TransactionalGraphWriter`,
 `BulkGraphWriter`) used only by `GraphMutationStore` implementations (Plan
 3) — never application-facing — and the two application/executor-facing
@@ -16,8 +18,11 @@ applications ever hold) and `GraphMutationStore` (executor-only). Readers
 and writers deliberately never share a protocol (ADR-0010): the
 vttsi-contracts `GraphStore` that mixed both, exposing `upsert_nodes` /
 `upsert_edges` directly to consumers, is superseded — raw writes are how
-pipelines get bypassed. The in-memory `MemoryGraphStore` adapter
-implementing all of these protocols comes in Task 18.
+pipelines get bypassed. Canonical reads and ledger reads are likewise never
+the same surface (ADR-0006 three-store separation, ADR-0011): the canonical
+graph and the candidate ledger have distinct access paths, so uncertainty
+cannot leak into a canonical query. The in-memory adapters implementing
+these protocols come in Task 18.
 """
 
 from datetime import datetime
@@ -29,7 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from kg_contracts._ulid import new_ulid
 from kg_contracts.assertions import Assertion, CanonicalEntity
 from kg_contracts.candidates import Candidate
-from kg_contracts.curation import CurationOperation, Precondition
+from kg_contracts.curation import CurationOperation, Precondition, ProcessingState
 from kg_contracts.identity import EntityRef
 
 
@@ -64,13 +69,20 @@ class AdapterCapabilities(BaseModel):
 
 
 class GraphReadOptions(BaseModel):
-    """Explicit consistency options every graph read takes (spec §3.3).
+    """Explicit consistency options every *canonical-graph* read takes (spec §3.3).
 
     `curation_epoch=None` means "the latest **published** epoch" — readers
     consume a published epoch, never "whatever is present", so one query can
-    never observe a partially promoted batch. `include_provisional` is
-    opt-in ledger visibility (default canonical-only, ADR-0006): uncertain
-    candidate-ledger records are excluded unless a caller explicitly asks.
+    never observe a partially promoted batch.
+
+    There is deliberately **no** ledger-visibility option here (ADR-0011,
+    correcting ADR-0006's original field list). Under ADR-0006 the canonical
+    graph contains only accepted records; uncertain candidates "never appear
+    as ordinary graph entities" and the three stores share a physical
+    database but "never one access path". An `include_provisional`-style flag
+    would make the canonical reader an access path into the ledger — exactly
+    the leak the three-store separation exists to prevent. Ledger visibility
+    is instead a separate surface: `LedgerReader` / `LedgerReadOptions`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -78,7 +90,6 @@ class GraphReadOptions(BaseModel):
     curation_epoch: int | None = None
     valid_at: datetime | None = None
     transaction_at: datetime | None = None
-    include_provisional: bool = False
     include_superseded: bool = False
     minimum_evidence_policy: str | None = None
 
@@ -130,6 +141,68 @@ class TemporalGraphReader(GraphReader, Protocol):
     §5.7): implemented first on the memory store, then per-backend as
     adopters need it.
     """
+
+
+class LedgerEntry(BaseModel):
+    """One candidate as it sits in the candidate ledger, with its state.
+
+    The ledger's read record (ADR-0006 store 1): the submitted `candidate`
+    plus the ledger's own `processing_state` (`curation.py`, the ledger's
+    async lifecycle — distinct from the canonical `CurationStatus`) and the
+    transaction time it was received. Pairing candidate with processing
+    state is what a canonical `CanonicalEntity`/`Assertion` deliberately
+    cannot carry — which is precisely why ledger visibility needs its own
+    record type and its own reader rather than a flag on the canonical read
+    surface. The full persisted ledger row (dedup keys, retry counters,
+    quarantine reasons) is modeled by the ledger store in Plan 2; this is
+    the minimal read projection the separation requires at the contract
+    layer.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    candidate: Candidate
+    processing_state: ProcessingState
+    received_at: datetime
+
+
+class LedgerReadOptions(BaseModel):
+    """Filters for a `LedgerReader` query (ADR-0006 store 1, ADR-0011).
+
+    Reads over the candidate ledger — the *uncertain* store — for review
+    tooling and operators, never mixed into canonical graph reads.
+    `processing_states=None` returns every ledger state; a tuple restricts
+    to those states (e.g. only `REVIEW_PENDING` for a review queue view).
+    `graph_id=None` spans all graphs; set it to scope to one.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    processing_states: tuple[ProcessingState, ...] | None = None
+    graph_id: str | None = None
+
+
+@runtime_checkable
+class LedgerReader(Protocol):
+    """Read-only access to the candidate ledger — a *separate* surface (ADR-0011).
+
+    The canonical `GraphReader` exposes only accepted graph records; this
+    protocol is the distinct access path to the uncertain candidate ledger
+    (ADR-0006: the three stores may share one physical database but "never
+    one access path"). Keeping them as two protocols is what makes "uncertain
+    candidates never appear as ordinary graph entities" a structural
+    guarantee rather than a per-query flag a caller must remember to unset.
+    A `GraphReader` and a `LedgerReader` are never the same protocol; an
+    adapter may implement one, the other, or both (over one physical store),
+    but the surfaces stay separate. Read-only, like `GraphReader`: ledger
+    writes go through `CandidateSink`, never here.
+    """
+
+    def ledger_entries(
+        self, options: LedgerReadOptions = LedgerReadOptions()
+    ) -> list[LedgerEntry]: ...
+
+    def ledger_entry(self, candidate_id: str) -> LedgerEntry | None: ...
 
 
 @runtime_checkable
