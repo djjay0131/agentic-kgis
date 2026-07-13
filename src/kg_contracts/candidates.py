@@ -35,14 +35,14 @@ a hard `ValidationError` instead of a silently accepted, unvalidated field.
 
 import re
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from kg_contracts._ulid import new_ulid
 from kg_contracts.derivation import Derivation
 from kg_contracts.evidence import EvidenceRef, ValidPeriod
-from kg_contracts.identity import EntityRef, is_identity_id
+from kg_contracts.identity import EntityRef, IdentityLinkKind, is_identity_id
 from kg_contracts.security import new_trace_id
 from kg_contracts.versioning import CONTRACT_VERSION
 
@@ -251,3 +251,128 @@ class ArtifactCandidate(CandidateEnvelope):
     source_uri: str = Field(min_length=1)
     media_type: str | None = None
     derivation: Derivation | None = None
+
+
+class ObservationCandidate(CandidateEnvelope):
+    """SPEC-LEVEL (implemented in Phase 4): a proposed sensor/measurement
+    observation.
+
+    Defined now (A2: no breaking union change later) so the nine-way
+    `Candidate` union is complete in v1, but only indicative fields plus an
+    open `payload` are validated here — full observation semantics
+    (units, method vocabularies, value typing) land with Phase 4
+    construction.
+    """
+
+    candidate_kind: Literal["observation"] = "observation"
+    metric: str
+    method: str | None = None
+    parameters: dict[str, object] = Field(default_factory=dict)
+    value: object = None
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+class DerivedAssertionCandidate(CandidateEnvelope):
+    """SPEC-LEVEL (implemented in Phase 4): a proposed assertion computed
+    from other canonical records.
+
+    `derivation` is required even at spec level — a derived assertion
+    without lineage is meaningless. `conclusion` and `payload` are open
+    placeholders; full conclusion typing lands with Phase 4 construction.
+    """
+
+    candidate_kind: Literal["derived_assertion"] = "derived_assertion"
+    derivation: Derivation
+    conclusion: dict[str, object] = Field(default_factory=dict)
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+class PlanCandidate(CandidateEnvelope):
+    """SPEC-LEVEL (implemented in Phase 4): a proposed generated plan.
+
+    A generated cut list is not a fact about the building — `objective`
+    and `inputs` are indicative fields only; full plan semantics land
+    with Phase 4 construction.
+    """
+
+    candidate_kind: Literal["plan"] = "plan"
+    objective: str
+    inputs: tuple[str, ...] = ()
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+class OntologyCandidate(CandidateEnvelope):
+    """SPEC-LEVEL (enters the §7.3 PROPOSED→APPROVED lifecycle; wired in
+    Plan 3): a proposed ontology term.
+
+    `term_kind` names what is being proposed (an entity type, relation
+    type, or attribute); full lifecycle wiring — the PROPOSED→APPROVED
+    workflow itself — lands in Plan 3.
+    """
+
+    candidate_kind: Literal["ontology"] = "ontology"
+    term_kind: Literal["entity_type", "relation_type", "attribute"]
+    term: str
+    definition: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+class IdentityLinkCandidate(CandidateEnvelope):
+    """SPEC-LEVEL (implemented in Phase 3 retrofit): a proposed cross-graph
+    identity link.
+
+    Placeholder validation only: `left`/`right` must be non-empty strings.
+    Full endpoint validation (well-formed identity IDs, graph membership)
+    lands with the Phase 3 retrofit implementation.
+    """
+
+    candidate_kind: Literal["identity_link"] = "identity_link"
+    left: str = Field(min_length=1)
+    right: str = Field(min_length=1)
+    kind: IdentityLinkKind
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+Candidate = Annotated[
+    EntityCandidate
+    | RelationCandidate
+    | AttributeAssertionCandidate
+    | ObservationCandidate
+    | DerivedAssertionCandidate
+    | ArtifactCandidate
+    | PlanCandidate
+    | OntologyCandidate
+    | IdentityLinkCandidate,
+    Field(discriminator="candidate_kind"),
+]
+"""The nine-variant discriminated union (spec §5.2), keyed on
+`candidate_kind`. Four variants are implemented in v1
+(`IMPLEMENTED_KINDS`); the remaining five are spec-level (A2/D2)."""
+
+CANDIDATE_KINDS: frozenset[str] = frozenset(
+    {
+        "entity",
+        "relation",
+        "attribute_assertion",
+        "observation",
+        "derived_assertion",
+        "artifact",
+        "plan",
+        "ontology",
+        "identity_link",
+    }
+)
+"""All nine candidate-kind strings — the full spec §5.2 union, whether or
+not a given kind is implemented by v1 pipelines."""
+
+IMPLEMENTED_KINDS: frozenset[str] = frozenset(
+    {"entity", "relation", "attribute_assertion", "artifact"}
+)
+"""The kinds v1 pipelines actually accept. Admission (KGCS) rejects the
+other five spec-level kinds with "defined but not implemented in v1"
+rather than a validation error — they are well-formed contracts, just not
+yet wired to a producer."""
+
+candidate_adapter: TypeAdapter[Candidate] = TypeAdapter(Candidate)
+"""Module-level `TypeAdapter` for deserializing ledger rows / wire
+payloads into the correct `Candidate` variant via `candidate_kind`."""
