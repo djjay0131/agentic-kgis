@@ -84,6 +84,21 @@ def test_validation_decision_valid_true_without_failure_kind_ok():
     assert decision.valid is True
 
 
+def test_validation_decision_valid_false_with_failure_kind_ok():
+    # the failure-recording case the class exists for: valid=False must
+    # construct when a failure_kind is supplied, and preserve it.
+    decision = ValidationDecision(
+        candidate_id="cand_1",
+        valid=False,
+        failure_kind=FailureKind.BAD_DATA,
+        reasons=("bad row",),
+        policy_version="1",
+        trace_id="trace_1",
+    )
+    assert decision.valid is False
+    assert decision.failure_kind is FailureKind.BAD_DATA
+
+
 def test_resolution_decision_requires_nonempty_score_vector():
     with pytest.raises(ValidationError, match="score_vector"):
         ResolutionDecision(
@@ -201,6 +216,20 @@ def test_review_decision_approve_without_edited_payload_ok():
         decided_at=NOW,
     )
     assert decision.edited_payload is None
+
+
+def test_review_decision_edit_with_edited_payload_ok():
+    # the edit-recording case: action=EDIT must construct when an
+    # edited_payload is supplied, and preserve it.
+    decision = ReviewDecision(
+        item_id="rv_1",
+        action=ReviewAction.EDIT,
+        actor="reviewer_1",
+        edited_payload={"display_name": "corrected"},
+        decided_at=NOW,
+    )
+    assert decision.action is ReviewAction.EDIT
+    assert decision.edited_payload == {"display_name": "corrected"}
 
 
 def test_duck_typed_fake_satisfies_review_queue():
