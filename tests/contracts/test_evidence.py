@@ -56,6 +56,28 @@ def test_absent_requires_absence_reason_and_forbids_content():
     assert a.absence_reason is AbsenceReason.SOURCE_UNAVAILABLE
     with pytest.raises(ValidationError, match="ABSENT"):
         _evidence(availability=EvidenceAvailability.ABSENT, content=None)
+    # ABSENT genuinely forbids present-state fields: a reader inspecting
+    # .content must never see data on evidence whose availability is ABSENT.
+    with pytest.raises(ValidationError, match="ABSENT evidence forbids content"):
+        _evidence(
+            availability=EvidenceAvailability.ABSENT,
+            absence_reason=AbsenceReason.SOURCE_UNAVAILABLE,
+            content="fabricated",
+        )
+    with pytest.raises(ValidationError, match="ABSENT evidence forbids payload_hash"):
+        _evidence(
+            availability=EvidenceAvailability.ABSENT,
+            absence_reason=AbsenceReason.SOURCE_UNAVAILABLE,
+            content=None,
+            payload_hash="deadbeef",
+        )
+    with pytest.raises(ValidationError, match="ABSENT evidence forbids error"):
+        _evidence(
+            availability=EvidenceAvailability.ABSENT,
+            absence_reason=AbsenceReason.SOURCE_UNAVAILABLE,
+            content=None,
+            error="boom",
+        )
 
 
 def test_error_requires_error_message():
@@ -64,6 +86,25 @@ def test_error_requires_error_message():
     assert err.error == "timeout fetching source"
     with pytest.raises(ValidationError, match="ERROR"):
         _evidence(availability=EvidenceAvailability.ERROR, content=None)
+
+
+def test_error_forbids_other_state_fields():
+    with pytest.raises(ValidationError, match="ERROR evidence forbids content"):
+        _evidence(availability=EvidenceAvailability.ERROR, error="boom",
+                  content="fabricated")
+    with pytest.raises(ValidationError, match="ERROR evidence forbids payload_hash"):
+        _evidence(availability=EvidenceAvailability.ERROR, error="boom",
+                  content=None, payload_hash="deadbeef")
+    with pytest.raises(ValidationError, match="ERROR evidence forbids absence_reason"):
+        _evidence(availability=EvidenceAvailability.ERROR, error="boom",
+                  content=None, absence_reason=AbsenceReason.NOT_QUERIED)
+
+
+def test_present_forbids_other_state_fields():
+    with pytest.raises(ValidationError, match="PRESENT evidence forbids absence_reason"):
+        _evidence(absence_reason=AbsenceReason.NOT_QUERIED)
+    with pytest.raises(ValidationError, match="PRESENT evidence forbids error"):
+        _evidence(error="boom")
 
 
 def test_evidence_ref_relationships():

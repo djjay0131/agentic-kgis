@@ -85,9 +85,12 @@ class AbsenceReason(StrEnum):
 class Evidence(BaseModel):
     """A single piece of evidence, with explicit availability.
 
-    Cross-field rules (enforced below): PRESENT requires `content` or
+    Cross-field rules (enforced below): each state requires its own field
+    and excludes the other states' fields, mirroring the constructor
+    helpers' parameter surfaces. PRESENT requires `content` or
     `payload_hash` and forbids `absence_reason`/`error`; ABSENT requires
-    `absence_reason`; ERROR requires `error`.
+    `absence_reason` and forbids `content`/`payload_hash`/`error`; ERROR
+    requires `error` and forbids `content`/`payload_hash`/`absence_reason`.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -116,9 +119,21 @@ class Evidence(BaseModel):
         elif self.availability is EvidenceAvailability.ABSENT:
             if self.absence_reason is None:
                 raise ValueError("ABSENT evidence requires absence_reason")
+            if self.content is not None:
+                raise ValueError("ABSENT evidence forbids content")
+            if self.payload_hash is not None:
+                raise ValueError("ABSENT evidence forbids payload_hash")
+            if self.error is not None:
+                raise ValueError("ABSENT evidence forbids error")
         elif self.availability is EvidenceAvailability.ERROR:
             if self.error is None:
                 raise ValueError("ERROR evidence requires error")
+            if self.content is not None:
+                raise ValueError("ERROR evidence forbids content")
+            if self.payload_hash is not None:
+                raise ValueError("ERROR evidence forbids payload_hash")
+            if self.absence_reason is not None:
+                raise ValueError("ERROR evidence forbids absence_reason")
         return self
 
 
@@ -152,7 +167,8 @@ def present_evidence(
     payload_hash: str | None = None,
 ) -> Evidence:
     """Build PRESENT evidence. Requires `content` or `payload_hash`."""
-    kwargs: dict[str, object] = dict(
+    return Evidence(
+        evidence_id=evidence_id if evidence_id is not None else "ev_" + new_ulid(),
         source_type=source_type,
         source_locator=source_locator,
         observed_at=observed_at,
@@ -162,9 +178,6 @@ def present_evidence(
         content=content,
         payload_hash=payload_hash,
     )
-    if evidence_id is not None:
-        kwargs["evidence_id"] = evidence_id
-    return Evidence(**kwargs)  # type: ignore[arg-type]
 
 
 def absent_evidence(
@@ -178,7 +191,8 @@ def absent_evidence(
     valid_time: ValidPeriod | None = None,
 ) -> Evidence:
     """Build ABSENT evidence with a required `reason`."""
-    kwargs: dict[str, object] = dict(
+    return Evidence(
+        evidence_id=evidence_id if evidence_id is not None else "ev_" + new_ulid(),
         source_type=source_type,
         source_locator=source_locator,
         observed_at=observed_at,
@@ -187,9 +201,6 @@ def absent_evidence(
         valid_time=valid_time,
         absence_reason=reason,
     )
-    if evidence_id is not None:
-        kwargs["evidence_id"] = evidence_id
-    return Evidence(**kwargs)  # type: ignore[arg-type]
 
 
 def error_evidence(
@@ -203,7 +214,8 @@ def error_evidence(
     valid_time: ValidPeriod | None = None,
 ) -> Evidence:
     """Build ERROR evidence with a required `error` message."""
-    kwargs: dict[str, object] = dict(
+    return Evidence(
+        evidence_id=evidence_id if evidence_id is not None else "ev_" + new_ulid(),
         source_type=source_type,
         source_locator=source_locator,
         observed_at=observed_at,
@@ -212,6 +224,3 @@ def error_evidence(
         valid_time=valid_time,
         error=error,
     )
-    if evidence_id is not None:
-        kwargs["evidence_id"] = evidence_id
-    return Evidence(**kwargs)  # type: ignore[arg-type]
