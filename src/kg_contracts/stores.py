@@ -1,4 +1,5 @@
-"""Read-side store contracts: capabilities, read options, reader protocols (ADR-0010).
+"""Store contracts: capabilities, read options, and reader/writer protocols
+(ADR-0010).
 
 *Phase-0 lesson (vttsi-contracts):* one broad `GraphStore` protocol becomes
 either too weak or too demanding once multiple backends, temporal curation,
@@ -6,25 +7,29 @@ and rollback share it — v2 splits reader/writer protocols and declares
 capabilities (spec §3.3, §5.6-§5.7). No Cypher/GQL on core contracts.
 
 This module defines the read surface (`GraphReader`, `TemporalGraphReader`),
-capability declarations (`AdapterCapabilities`, `CapabilityDeclaring`), and
-the adapter-internal writer protocols (`GraphWriter`,
-`TransactionalGraphWriter`, `BulkGraphWriter`) used only by
-`GraphMutationStore` implementations (Plan 3) — never application-facing.
-Readers and writers deliberately never share a protocol (ADR-0010): the
+capability declarations (`AdapterCapabilities`, `CapabilityDeclaring`), the
+adapter-internal writer protocols (`GraphWriter`, `TransactionalGraphWriter`,
+`BulkGraphWriter`) used only by `GraphMutationStore` implementations (Plan
+3) — never application-facing — and the two application/executor-facing
+write surfaces themselves: `CandidateSink` (the only write surface
+applications ever hold) and `GraphMutationStore` (executor-only). Readers
+and writers deliberately never share a protocol (ADR-0010): the
 vttsi-contracts `GraphStore` that mixed both, exposing `upsert_nodes` /
 `upsert_edges` directly to consumers, is superseded — raw writes are how
-pipelines get bypassed. The application-facing write surfaces
-(`CandidateSink`, `GraphMutationStore`) come in Task 15; the in-memory
-`MemoryGraphStore` adapter implementing all of these protocols comes in
-Task 18.
+pipelines get bypassed. The in-memory `MemoryGraphStore` adapter
+implementing all of these protocols comes in Task 18.
 """
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Protocol, Sequence, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from kg_contracts._ulid import new_ulid
 from kg_contracts.assertions import Assertion, CanonicalEntity
+from kg_contracts.candidates import Candidate
+from kg_contracts.curation import CurationOperation, Precondition
 from kg_contracts.identity import EntityRef
 
 
@@ -171,3 +176,113 @@ class BulkGraphWriter(GraphWriter, Protocol):
     """
 
     def put_entities(self, entities: Sequence[CanonicalEntity]) -> int: ...
+
+
+class SubmissionStatus(StrEnum):
+    """Synchronous candidate-admission outcome only (spec §7.2).
+
+    Deterministic checks performed at submission time — well-formedness,
+    exact-duplicate detection. Acceptance into the canonical graph is a
+    separate, asynchronous decision reported later through the ledger's own
+    `ProcessingState` (`curation.py`), never folded into this enum.
+    """
+
+    RECEIVED = "RECEIVED"
+    DUPLICATE = "DUPLICATE"
+    INVALID = "INVALID"
+
+
+class SubmissionOutcome(BaseModel):
+    """The synchronous admission outcome for one submitted candidate."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    candidate_id: str
+    status: SubmissionStatus
+    reason: str | None = None
+    trace_id: str
+
+
+class SubmissionResult(BaseModel):
+    """The synchronous response to a `CandidateSink.submit()` call."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    submission_id: str = Field(default_factory=lambda: "sub_" + new_ulid())
+    outcomes: tuple[SubmissionOutcome, ...]
+
+    def counts(self) -> dict[SubmissionStatus, int]:
+        """Aggregate `outcomes` by `SubmissionStatus`."""
+        result: dict[SubmissionStatus, int] = {}
+        for outcome in self.outcomes:
+            result[outcome.status] = result.get(outcome.status, 0) + 1
+        return result
+
+
+@runtime_checkable
+class CandidateSink(Protocol):
+    """The only application-facing write surface (ADR-0010).
+
+    Applications submit candidates to the ledger; they never mutate the
+    canonical graph directly. `submit()` returns only the synchronous
+    admission outcome (`SubmissionStatus`) — whether acceptance into the
+    canonical graph eventually follows is reported asynchronously through
+    the ledger's `ProcessingState`, not through this call's return value.
+    """
+
+    def submit(self, candidates: Sequence[Candidate]) -> SubmissionResult: ...
+
+
+class GraphMutationBatch(BaseModel):
+    """A `CurationPlan` compiled into the operations an executor applies.
+
+    Mutations commit as atomic curation epochs (spec §3.3): `operations`
+    must carry at least one operation — an empty batch has no epoch to
+    commit.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    batch_id: str = Field(default_factory=lambda: "mb_" + new_ulid())
+    plan_id: str
+    operations: tuple[CurationOperation, ...] = Field(min_length=1)
+
+
+class CommitResult(BaseModel):
+    """The outcome of a `GraphMutationStore.apply()` call.
+
+    `committed=True` requires `new_epoch` — mutations commit as atomic
+    curation epochs (spec §3.3), so a successful commit always names the
+    epoch it produced. `committed=False` with `failed_preconditions`
+    non-empty means a stale snapshot: the caller must re-evaluate against
+    the current graph state, never blindly retry the same batch.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    batch_id: str
+    committed: bool
+    new_epoch: int | None = None
+    failed_preconditions: tuple[Precondition, ...] = ()
+    error: str | None = None
+
+    @model_validator(mode="after")
+    def _check_committed_requires_new_epoch(self) -> "CommitResult":
+        if self.committed and self.new_epoch is None:
+            raise ValueError("committed=True requires new_epoch")
+        return self
+
+
+@runtime_checkable
+class GraphMutationStore(Protocol):
+    """Applies precondition-checked mutation batches (ADR-0010).
+
+    Executor-only: the curation core turns a `CurationPlan` into a
+    `GraphMutationBatch` and hands it here; applications must never hold a
+    `GraphMutationStore` reference (governance-delta principle 3). The only
+    application-facing write surface is `CandidateSink`.
+    """
+
+    def apply(
+        self, batch: GraphMutationBatch, preconditions: Sequence[Precondition]
+    ) -> CommitResult: ...
