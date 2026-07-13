@@ -1,5 +1,20 @@
 # KGIS/KGCS Plan 1: Repo Bootstrap + kg_contracts Implementation Plan
 
+> ## ⛔ OBSOLETE — DO NOT EXECUTE
+>
+> This plan was written against **spec v1** and is superseded by
+> **[Plan 1 v2: Bootstrap Completion + kg_contracts v2](2026-07-12-01-bootstrap-and-contracts-v2.md)**
+> (`docs/superpowers/plans/2026-07-12-01-bootstrap-and-contracts-v2.md`).
+>
+> The approved disposition of external review PR #1
+> (`docs/ai/chatgpt-feedback-disposition.md`, Consequences §5) obsoleted this
+> plan before execution: the contracts changed substantially (nine-variant
+> candidate union, `CandidateScores` replacing single confidence, namespaced
+> identity per ADR-0008, first-class evidence, bitemporal assertions,
+> two-level store contracts per ADR-0010, no PROVISIONAL nodes per ADR-0006,
+> three packages per ADR-0002 as amended). No task below was executed.
+> This file is retained for provenance only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Initialize both repos with memory banks and deliver a complete, tested `kg_contracts` package — schemas, canonical IDs, the `GraphStore` protocol, curation/ingestion/registry contracts, an in-memory reference store, and a reusable contract test suite.
