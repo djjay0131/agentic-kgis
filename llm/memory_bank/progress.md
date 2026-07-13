@@ -14,3 +14,6 @@
 Works: nothing built yet (docs/governance only).
 Not built yet: all of kg_contracts + kgis (Plan 1+3), all of KGCS
 (Plans 2/4/5).
+- 2026-07-12: PR #1 (spec v2 cycle) merged by owner. Governance upgraded
+  to agentic-governance v0.2 (levels L0-L3, workflow-selection, steward
+  INACTIVE) via delta upgrade PR.
