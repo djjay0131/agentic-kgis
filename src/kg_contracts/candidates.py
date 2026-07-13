@@ -33,15 +33,48 @@ a hard `ValidationError` instead of a silently accepted, unvalidated field.
   overwriting another.
 """
 
+import re
 from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kg_contracts._ulid import new_ulid
-from kg_contracts.evidence import EvidenceRef
+from kg_contracts.derivation import Derivation
+from kg_contracts.evidence import EvidenceRef, ValidPeriod
+from kg_contracts.identity import EntityRef, is_identity_id
 from kg_contracts.security import new_trace_id
 from kg_contracts.versioning import CONTRACT_VERSION
+
+# entity_type: a plain ^...$ pattern string consumed by pydantic
+# Field(pattern=...), which anchors/validates with its own (Rust regex)
+# engine — no compiled object needed, matching identity.py's EntityRef
+# convention.
+_ENTITY_TYPE_PATTERN = r"^[A-Z][A-Za-z0-9]*$"
+
+# relation_type: validated by hand in a model_validator (to raise a custom
+# "UPPER_SNAKE" message), so it is compiled and checked with .fullmatch() —
+# `$` alone also matches just before a trailing newline in Python's `re`,
+# which would let e.g. "PLAYS_FOR\n" slip through.
+_RELATION_TYPE_RE = re.compile(r"[A-Z][A-Z0-9_]*")
+
+SubjectRef = EntityRef | str
+"""A relation/attribute-assertion subject or object: a namespaced `EntityRef`
+or a bare identity-ID string (`kg://<graph-id>/identity/<ulid>`). A bare
+`Label:key` string is not accepted here either — see `_validate_subject_ref`.
+"""
+
+
+def _validate_subject_ref(value: SubjectRef) -> SubjectRef:
+    """Shared validator for `SubjectRef` fields.
+
+    An `EntityRef` is always valid. A `str` must be a well-formed identity
+    ID (`is_identity_id`); anything else — including the deprecated bare
+    `Label:key` form — is rejected naming the offending value (ADR-0008).
+    """
+    if isinstance(value, str) and not is_identity_id(value):
+        raise ValueError(f"subject/object string is not a valid identity id: {value!r}")
+    return value
 
 
 class CandidateScores(BaseModel):
@@ -125,3 +158,96 @@ class CandidateEnvelope(BaseModel):
     scores: CandidateScores
     trace_id: str = Field(default_factory=new_trace_id)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class EntityCandidate(CandidateEnvelope):
+    """A proposed entity identity (spec §5.2, disposition D2).
+
+    A proposed identity is *made of* its namespaced aliases — there is no
+    bare-ID fallback. `aliases` must be non-empty, and every alias's
+    `entity_type` must equal the candidate's own `entity_type`: a candidate
+    proposing a `Player` cannot be identified by a `Coach` alias.
+    """
+
+    candidate_kind: Literal["entity"] = "entity"
+    entity_type: str = Field(pattern=_ENTITY_TYPE_PATTERN)
+    aliases: tuple[EntityRef, ...]
+    display_name: str | None = None
+    properties: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_aliases(self) -> "EntityCandidate":
+        if not self.aliases:
+            raise ValueError("aliases must be non-empty: an identity is made of its aliases")
+        for alias in self.aliases:
+            if alias.entity_type != self.entity_type:
+                raise ValueError(
+                    f"alias entity_type {alias.entity_type!r} does not match "
+                    f"candidate entity_type {self.entity_type!r}"
+                )
+        return self
+
+
+class RelationCandidate(CandidateEnvelope):
+    """A proposed relation between two subjects (spec §5.2, disposition D2).
+
+    `subject`/`object` accept either a namespaced `EntityRef` or an
+    already-minted identity-ID string; a bare `Label:key` string is
+    rejected (ADR-0008).
+    """
+
+    # NB: `properties` is declared before `object` — once a class body binds
+    # a field literally named `object`, mypy resolves later bare `object`
+    # annotations in that same body to the field, not the builtin type.
+    candidate_kind: Literal["relation"] = "relation"
+    relation_type: str
+    subject: SubjectRef
+    properties: dict[str, object] = Field(default_factory=dict)
+    object: SubjectRef
+    valid_period: ValidPeriod | None = None
+
+    @model_validator(mode="after")
+    def _check_relation(self) -> "RelationCandidate":
+        if not _RELATION_TYPE_RE.fullmatch(self.relation_type):
+            raise ValueError(
+                f"relation_type {self.relation_type!r} must be UPPER_SNAKE "
+                f"(fullmatch {_RELATION_TYPE_RE.pattern!r})"
+            )
+        _validate_subject_ref(self.subject)
+        _validate_subject_ref(self.object)
+        return self
+
+
+class AttributeAssertionCandidate(CandidateEnvelope):
+    """A proposed fact about an entity (spec §5.2, disposition D2).
+
+    Bitemporal-ready via `valid_period`; transaction time is assigned by
+    the ledger (Plan 2), not here.
+    """
+
+    candidate_kind: Literal["attribute_assertion"] = "attribute_assertion"
+    subject: SubjectRef
+    attribute: str = Field(min_length=1)
+    value: object
+    valid_period: ValidPeriod | None = None
+
+    @model_validator(mode="after")
+    def _check_subject(self) -> "AttributeAssertionCandidate":
+        _validate_subject_ref(self.subject)
+        return self
+
+
+class ArtifactCandidate(CandidateEnvelope):
+    """A proposed produced object (spec §5.2, disposition D2).
+
+    An artifact is not a fact about the world (spec §5.2) — it is a
+    produced object (e.g. a cut list), identified by its hash and source
+    location rather than by an entity identity.
+    """
+
+    candidate_kind: Literal["artifact"] = "artifact"
+    artifact_type: str
+    artifact_hash: str = Field(min_length=1)
+    source_uri: str = Field(min_length=1)
+    media_type: str | None = None
+    derivation: Derivation | None = None
