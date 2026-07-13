@@ -162,8 +162,18 @@ class ConflictRecord(BaseModel):
 
     Competing assertions are never overwritten — both (or all) survive as
     ordinary `Assertion` records, and this record tracks which one is
-    currently preferred, if any. Setting `preferred_assertion_id` forces
-    `status` to `RESOLVED`; leaving it unset requires `UNRESOLVED`.
+    currently preferred, if any. `preferred_assertion_id` and `status` are
+    two faces of one fact, so the model enforces a strict biconditional and
+    makes any inconsistent pairing unrepresentable:
+
+    - `preferred_assertion_id is None` ⟺ `status is UNRESOLVED`
+    - `preferred_assertion_id is not None` ⟺ `status is RESOLVED`, and the
+      preferred id must be one of `assertion_ids`.
+
+    A `RESOLVED` record therefore always names its winner and an
+    `UNRESOLVED` record never carries a dangling preference — neither
+    `RESOLVED`-without-a-preference nor `UNRESOLVED`-with-a-preference can
+    be constructed.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -176,15 +186,21 @@ class ConflictRecord(BaseModel):
 
     @model_validator(mode="after")
     def _check_preferred_and_status(self) -> "ConflictRecord":
-        if self.preferred_assertion_id is not None:
-            if self.preferred_assertion_id not in self.assertion_ids:
+        if self.preferred_assertion_id is None:
+            if self.status is not ConflictStatus.UNRESOLVED:
                 raise ValueError(
-                    f"preferred_assertion_id {self.preferred_assertion_id!r} "
-                    "is not a member of assertion_ids"
+                    "preferred_assertion_id is unset, so status must be UNRESOLVED "
+                    f"(got {self.status!r})"
                 )
+        else:
             if self.status is not ConflictStatus.RESOLVED:
                 raise ValueError(
                     "preferred_assertion_id is set, so status must be RESOLVED "
                     f"(got {self.status!r})"
+                )
+            if self.preferred_assertion_id not in self.assertion_ids:
+                raise ValueError(
+                    f"preferred_assertion_id {self.preferred_assertion_id!r} "
+                    "is not a member of assertion_ids"
                 )
         return self

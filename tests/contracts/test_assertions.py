@@ -143,7 +143,7 @@ def test_assertion_scores_and_nonempty_authority():
         )
 
 
-def test_conflict_record_requires_at_least_two_assertion_ids_and_preferred_membership():
+def test_conflict_record_requires_at_least_two_assertion_ids():
     with pytest.raises(ValidationError):
         ConflictRecord(
             assertion_ids=("as_1",),
@@ -151,6 +151,59 @@ def test_conflict_record_requires_at_least_two_assertion_ids_and_preferred_membe
             resolution_policy=None,
             status=ConflictStatus.UNRESOLVED,
         )
+
+
+# The biconditional (spec §7.5): preferred_assertion_id and status are two
+# faces of one fact, so all four (preferred?, status?) combinations are
+# tested — the two consistent pairings construct, the two inconsistent ones
+# and the non-member preferred are unrepresentable.
+
+
+def test_conflict_unresolved_without_preferred_is_valid():
+    record = ConflictRecord(
+        assertion_ids=("as_1", "as_2"),
+        preferred_assertion_id=None,
+        resolution_policy=None,
+        status=ConflictStatus.UNRESOLVED,
+    )
+    assert record.status is ConflictStatus.UNRESOLVED
+    assert record.preferred_assertion_id is None
+    assert record.conflict_id.startswith("cf_")
+
+
+def test_conflict_resolved_with_member_preferred_is_valid():
+    record = ConflictRecord(
+        assertion_ids=("as_1", "as_2"),
+        preferred_assertion_id="as_1",
+        resolution_policy="highest_authority",
+        status=ConflictStatus.RESOLVED,
+    )
+    assert record.status is ConflictStatus.RESOLVED
+    assert record.preferred_assertion_id == "as_1"
+
+
+def test_conflict_resolved_without_preferred_is_rejected():
+    # The bug this strengthening fixes: RESOLVED must always name its winner.
+    with pytest.raises(ValidationError, match="RESOLVED"):
+        ConflictRecord(
+            assertion_ids=("as_1", "as_2"),
+            preferred_assertion_id=None,
+            resolution_policy=None,
+            status=ConflictStatus.RESOLVED,
+        )
+
+
+def test_conflict_unresolved_with_preferred_is_rejected():
+    with pytest.raises(ValidationError, match="UNRESOLVED"):
+        ConflictRecord(
+            assertion_ids=("as_1", "as_2"),
+            preferred_assertion_id="as_1",
+            resolution_policy=None,
+            status=ConflictStatus.UNRESOLVED,
+        )
+
+
+def test_conflict_preferred_not_in_assertion_ids_is_rejected():
     with pytest.raises(ValidationError, match="member"):
         ConflictRecord(
             assertion_ids=("as_1", "as_2"),
@@ -158,21 +211,3 @@ def test_conflict_record_requires_at_least_two_assertion_ids_and_preferred_membe
             resolution_policy=None,
             status=ConflictStatus.RESOLVED,
         )
-
-
-def test_conflict_record_setting_preferred_forces_resolved():
-    with pytest.raises(ValidationError, match="RESOLVED"):
-        ConflictRecord(
-            assertion_ids=("as_1", "as_2"),
-            preferred_assertion_id="as_1",
-            resolution_policy=None,
-            status=ConflictStatus.UNRESOLVED,
-        )
-    record = ConflictRecord(
-        assertion_ids=("as_1", "as_2"),
-        preferred_assertion_id="as_1",
-        resolution_policy="highest_authority",
-        status=ConflictStatus.RESOLVED,
-    )
-    assert record.conflict_id.startswith("cf_")
-    assert record.status is ConflictStatus.RESOLVED
