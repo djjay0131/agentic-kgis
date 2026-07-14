@@ -60,6 +60,12 @@ class SourceRecord(BaseModel):
 
     `index` is the record's 0-based position in the source stream, which is
     what makes ordering assertions (and "record 47 failed") possible.
+
+    `issues` lets a *reader* report bad data without raising. A JSON array
+    holding a bare scalar where an object belongs is malformed data, not an
+    I/O fault: the reader emits the record carrying an error issue, and
+    validation rejects it with a real reason. Raising there would kill the
+    whole run over one bad element; silently skipping it would be a gap.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -67,6 +73,7 @@ class SourceRecord(BaseModel):
     index: int = Field(ge=0)
     coordinates: SourceCoordinates
     data: dict[str, object]
+    issues: tuple[RecordIssue, ...] = ()
 
 
 class NormalizedRecord(BaseModel):
