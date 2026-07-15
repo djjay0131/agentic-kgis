@@ -86,6 +86,7 @@ class IngestPipeline:
         ontology_strict: bool = True,
         clock: Clock | None = None,
         ids: IdStrategy | None = None,
+        run_id: str | None = None,
         ledger_reader: LedgerReader | None = None,
         batch_size: int = DEFAULT_BATCH_SIZE,
         job_id: str | None = None,
@@ -112,6 +113,11 @@ class IngestPipeline:
         )
         self._clock = clock or SystemClock()
         self._ids = ids or DeterministicIdStrategy()
+        # A pinned run_id makes a run byte-reproducible, trace IDs and all — the
+        # strongest form of "deterministic replay". Left None (the default), each
+        # invocation is a fresh run with its own trace, so the audit stream can
+        # still tell two ingests of the same data apart (spec §5.9).
+        self._run_id = run_id
         self._ledger_reader = ledger_reader
         self._batch_size = batch_size
         self._job_id = job_id or new_run_id().replace("run_", "job_")
@@ -143,7 +149,7 @@ class IngestPipeline:
     # --- internals -----------------------------------------------------------
 
     def _execute(self, *, submit: bool) -> IngestionReport:
-        run_id = new_run_id()
+        run_id = self._run_id or new_run_id()
         report = IngestionReport(
             graph_id=self._graph_id,
             job_id=self._job_id,

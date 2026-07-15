@@ -93,6 +93,7 @@ def build_pipeline(
     defaults: dict[str, object] = {
         "clock": FixedClock(NOW),
         "ids": DeterministicIdStrategy(),
+        "run_id": "run-fixed",
         "job_id": "job-fixed",
     }
     return IngestPipeline(
