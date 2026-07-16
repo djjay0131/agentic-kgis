@@ -1,7 +1,7 @@
 # Active Context — agentic-kgis
 
 Update 2026-07-14: **Sprint 1 (Core Ingestion Engine) complete** on
-`feature/sprint-1-core-ingestion` (not yet PR'd). First deterministic
+`feature/sprint-1-core-ingestion`. First deterministic
 structured-ingestion pipeline in `src/kgis/`, on `kg_contracts` v2 only:
 reader (iterable/CSV/JSON) → normalize (total) → validate (two-tier) →
 build candidates (entity/relation/attribute) → `CandidateSink` →
@@ -9,14 +9,16 @@ build candidates (entity/relation/attribute) → `CandidateSink` →
 idempotency (intra-run suppression + cross-run sink dedup + injectable
 deterministic IDs), full DI. 481 tests repo-wide, `ruff`/`mypy src`
 strict green, 8 small commits. Three ADR candidates in
-`docs/adr/candidates/` await owner review (0001 record-scoped validation,
-0002 Source composition, 0003 ULID helper + attribute vocabulary gaps).
-Report: `docs/sprints/2026-07-14-sprint-1-core-ingestion.md`. NEXT:
-owner reviews ADR candidates + opens PR; then Plan 2 (candidate ledger +
-evidence registry) makes idempotency durable and lets the null-value rule
-record absence via `Evidence` ABSENT. Deferred within kgis: `Source.fetch()`
-facade, CLI, streaming/bounded dedup. Scope held: no graph writes, no ER,
-no LLM extraction, no GraphRAG this sprint.
+`docs/adr/candidates/` for reviewer/owner disposition (0001 record-scoped
+validation, 0002 Source composition, 0003 ULID helper + attribute
+vocabulary gaps). Report:
+`docs/sprints/2026-07-14-sprint-1-core-ingestion.md`. NEXT (author):
+push branch + open draft PR (author responsibility per `CONTRIBUTING.md`);
+then reviewer reviews and the ADR candidates get dispositioned. After that,
+Plan 2 (candidate ledger + evidence registry) makes idempotency durable and
+lets the null-value rule record absence via `Evidence` ABSENT. Deferred
+within kgis: `Source.fetch()` facade, CLI, streaming/bounded dedup. Scope
+held: no graph writes, no ER, no LLM extraction, no GraphRAG this sprint.
 
 Update 2026-07-12: **Plan 1 v2 complete.** `kg_contracts` public API v2
 shipped (Tasks 3–18 implemented, Task 19 wired the top-level export

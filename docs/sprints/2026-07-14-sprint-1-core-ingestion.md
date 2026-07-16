@@ -157,10 +157,11 @@ honest `None`.
 
 Ordered by leverage:
 
-1. **Owner review of the three ADR candidates.** 0001 (record-scoped
-   validation) and 0003-B (attribute vocabulary) both want small, additive
-   `kg_contracts` changes that every later ingestion mode will otherwise work
-   around independently. Deciding them now prevents divergence.
+1. **Disposition of the three ADR candidates** (reviewer review + owner
+   decision). 0001 (record-scoped validation) and 0003-B (attribute
+   vocabulary) both want small, additive `kg_contracts` changes that every
+   later ingestion mode will otherwise work around independently. Deciding
+   them now prevents divergence.
 2. **The candidate ledger (Plan 2).** This sprint submits into the *memory*
    `CandidateSink`. A persistent ledger with the real `ProcessingState`
    lifecycle turns cross-run idempotency from a test fact into a durable one,
