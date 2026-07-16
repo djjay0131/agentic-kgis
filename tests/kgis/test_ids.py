@@ -3,15 +3,41 @@ asymmetry between `candidate_id` (keyed on the fact) and `trace_id` (keyed
 on the run) that the rest of the sprint's determinism guarantees rest on.
 """
 
+import os
+
+from kg_contracts._ulid import _encode_base32
 from kgis.ids import (
     DeterministicIdStrategy,
     RandomIdStrategy,
+    _encode_crockford,
     new_run_id,
     random_suffix,
     stable_suffix,
 )
 
 _FACT = {"graph_id": "g1", "candidate_kind": "entity", "semantic_key": "player/usssa/42"}
+
+
+class TestEncoderMatchesContract:
+    """`kgis.ids` reimplements the Crockford base32 encoder rather than reach
+    into `kg_contracts._ulid` (a private module of another package) — see
+    docs/adr/candidates/0003. That is the right coupling trade, but it leaves
+    a latent hazard: if the contract's alphabet or layout ever changed, a kgis
+    ID would silently stop matching a real ULID's shape. This test is the
+    tripwire — it deliberately imports the contract's private encoder so the
+    two implementations cannot drift apart unnoticed. Delete it if/when a
+    public encoder lands on kg_contracts and kgis imports that instead."""
+
+    def test_matches_the_contract_encoder_across_inputs_and_lengths(self) -> None:
+        cases = [
+            (b"\x00", 1),
+            (b"\xff" * 6, 10),
+            (bytes(range(16)), 26),
+            (os.urandom(10), 16),
+            (os.urandom(6), 10),
+        ]
+        for data, length in cases:
+            assert _encode_crockford(data, length) == _encode_base32(data, length)
 
 
 class TestStableSuffix:
