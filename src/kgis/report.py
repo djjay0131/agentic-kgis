@@ -172,16 +172,20 @@ class IngestionReport(IngestReport):
 
     @property
     def succeeded(self) -> bool:
-        """True only if the run completed *and* nothing was rejected.
+        """True only if the run completed *and* nothing was rejected — by us
+        or by the sink.
 
         Deliberately strict (spec §9): a run that emitted 10,000 candidates of
         which 40 were rejected did not succeed, it partially succeeded, and
-        calling that a success is how bad ingests get shipped.
+        calling that a success is how bad ingests get shipped. The inherited
+        `invalid` counts here for the same reason: a candidate the *sink*
+        refused is every bit as rejected as one we refused ourselves.
         """
         return (
             not self.incomplete
             and self.records_invalid == 0
             and self.candidates_rejected == 0
+            and self.invalid == 0
         )
 
     def fingerprint(self) -> dict[str, object]:

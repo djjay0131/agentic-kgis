@@ -15,6 +15,7 @@ precisely because most tests check something other than timing or id-shape.
 from datetime import UTC, datetime
 from typing import Sequence
 
+from kg_contracts.stores import CandidateSink
 from kg_contracts.testing.memory import MemoryCandidateSink
 from kgis.builders import (
     AttributeCandidateBuilder,
@@ -26,7 +27,7 @@ from kgis.builders import (
 )
 from kgis.clock import FixedClock
 from kgis.ids import DeterministicIdStrategy
-from kgis.normalize import FieldSpec, SchemaNormalizer
+from kgis.normalize import FieldSpec, Normalizer, SchemaNormalizer
 from kgis.ontology import Ontology
 from kgis.pipeline import IngestPipeline
 from kgis.sources.base import RecordReader
@@ -82,10 +83,11 @@ def build_pipeline(
     *,
     reader: RecordReader | None = None,
     records: Sequence[dict[str, str]] = PLAYERS,
+    normalizer: Normalizer | None = None,
     builder: CandidateBuilder | None = None,
     ontology: Ontology | None = None,
     ontology_strict: bool = True,
-    sink: MemoryCandidateSink | None = None,
+    sink: CandidateSink | None = None,
     **overrides: object,
 ) -> IngestPipeline:
     # Deterministic defaults a test may override (e.g. a ticking clock);
@@ -99,7 +101,7 @@ def build_pipeline(
     return IngestPipeline(
         graph_id="baseball",
         reader=reader if reader is not None else IterableRecordReader(records),
-        normalizer=player_schema(),
+        normalizer=normalizer if normalizer is not None else player_schema(),
         builder=builder if builder is not None else player_builder(),
         sink=sink if sink is not None else MemoryCandidateSink(),
         scoring=SourceScoring(source_reliability=0.8),

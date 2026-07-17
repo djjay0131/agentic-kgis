@@ -27,7 +27,12 @@ stage order alone would not give you:
   no-op. Neither is redundant.
 
 - **A record failure is isolated; a source failure is not.** One malformed
-  row is rejected and the run continues (rejections are data). A reader that
+  row is rejected and the run continues (rejections are data) — and that
+  holds at *every* stage a record can fail, not just record validation. The
+  builder's declared `required_fields` are checked before any builder runs,
+  and data-dependent failures that only surface at build time (a
+  `RecordDataError`, a contract model refusing a value) become structured
+  record rejections with nothing from that row admitted. A reader that
   dies mid-stream is caught, the report is marked `incomplete`, and the
   candidates already built are kept — never a silent truncation that looks
   like a short source (spec §9).
@@ -39,23 +44,30 @@ because it holds no reference that can.
 
 from typing import Sequence
 
+from pydantic import ValidationError as PydanticValidationError
+
 from kg_contracts.candidates import Candidate
+from kg_contracts.curation import FailureKind
 from kg_contracts.ingestion import IngestReport
 from kg_contracts.stores import CandidateSink, LedgerReader, SubmissionStatus
 
 from kgis.builders import BuildContext, CandidateBuilder, SourceScoring
 from kgis.clock import Clock, SystemClock
-from kgis.errors import SourceReadError
+from kgis.errors import RecordDataError, SourceReadError
 from kgis.ids import DeterministicIdStrategy, IdStrategy, new_run_id
 from kgis.normalize import Normalizer
 from kgis.ontology import CoverageCounter, Ontology
+from kgis.records import NormalizedRecord
 from kgis.report import DryRunPlan, IngestionReport
 from kgis.sources.base import RecordReader
 from kgis.validate import (
     CandidateValidator,
+    CompositeRecordValidator,
     IssueValidator,
     OntologyCandidateValidator,
+    RecordValidation,
     RecordValidator,
+    RequiredValuesValidator,
 )
 
 DEFAULT_BATCH_SIZE = 500
@@ -107,7 +119,19 @@ class IngestPipeline:
         self._ontology_version = ontology_version or (
             ontology.version if ontology is not None else "unversioned"
         )
-        self._record_validator = record_validator or IssueValidator()
+        # The builder's declared `required_fields` are honored here, not merely
+        # honorable: the pipeline composes a `RequiredValuesValidator` for them
+        # so a record missing a field a builder cannot work without (a relation
+        # endpoint, an entity key) is rejected at the record tier — before any
+        # builder runs and can fail on it. An injected validator runs first;
+        # the required-fields guard is appended, never replaced.
+        base_record_validator = record_validator or IssueValidator()
+        required = tuple(builder.required_fields)
+        self._record_validator: RecordValidator = (
+            CompositeRecordValidator([base_record_validator, RequiredValuesValidator(required)])
+            if required
+            else base_record_validator
+        )
         self._candidate_validator = candidate_validator or OntologyCandidateValidator(
             ontology, strict=ontology_strict
         )
@@ -211,9 +235,24 @@ class IngestPipeline:
                 if not decision.valid:
                     report.note_validation_failure(decision)
                     continue
+
+                try:
+                    built = list(self._builder.build(normalized, context))
+                except (RecordDataError, PydanticValidationError) as exc:
+                    # Data the record tier could not see — an inverted
+                    # valid-time interval, a dynamic type violating a contract
+                    # constraint — surfaces only at build time. It is still the
+                    # *record's* fault, so it becomes a structured rejection
+                    # like any other bad row: the run continues, and nothing
+                    # built from this row is admitted, partially or otherwise.
+                    # Anything else a builder raises is a bug, not data, and
+                    # propagates — a programmer error must never be quarantined
+                    # as a bad record.
+                    report.note_validation_failure(self._build_failure(normalized, exc))
+                    continue
                 report.records_valid += 1
 
-                for candidate in self._builder.build(normalized, context):
+                for candidate in built:
                     report.candidates_built += 1
                     if not self._admit_candidate(candidate, report, coverage, seen_keys):
                         continue
@@ -225,6 +264,21 @@ class IngestPipeline:
 
         return planned
 
+    def _build_failure(self, record: NormalizedRecord, exc: Exception) -> RecordValidation:
+        """A build-time data failure, expressed as the record rejection it is.
+
+        Keyed on `(index, coordinates)` like every record-tier decision — no
+        candidate exists to key it on, and none ever will (spec §5.8).
+        """
+        return RecordValidation(
+            index=record.index,
+            coordinates=record.coordinates,
+            valid=False,
+            failure_kind=FailureKind.BAD_DATA,
+            reasons=(f"candidate construction failed: {exc}",),
+            policy_version=self._record_validator.policy_version,
+        )
+
     def _admit_candidate(
         self,
         candidate: Candidate,
@@ -234,21 +288,26 @@ class IngestPipeline:
     ) -> bool:
         """Decide whether one built candidate joins the plan.
 
-        Order matters: intra-run duplicate suppression first (a repeat is not
-        a new observation and should not even be validated twice), then the
-        sink's guard. Coverage is observed only for candidates that will
-        actually be planned, so the report never counts a term it dropped.
+        Order matters: intra-run duplicate suppression first (a repeat of an
+        *admitted* candidate is not a new observation), then the sink's guard.
+        The semantic key is reserved only after validation succeeds — a
+        rejected candidate must not claim the dedup slot, because an injected
+        validator may legitimately judge content or policy, and the next
+        same-key candidate deserves its own verdict rather than silent
+        suppression by a failure. Coverage is observed only for candidates
+        that will actually be planned, so the report never counts a term it
+        dropped.
         """
         if candidate.semantic_key in seen_keys:
             report.candidates_suppressed += 1
             return False
-        seen_keys.add(candidate.semantic_key)
 
         verdict = self._candidate_validator.validate(candidate)
         if not verdict.valid:
             report.note_candidate_rejection(verdict)
             return False
 
+        seen_keys.add(candidate.semantic_key)
         coverage.observe(candidate)
         return True
 

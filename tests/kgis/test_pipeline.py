@@ -3,17 +3,32 @@ failure-isolation split, and CandidateSink integration. The cross-cutting
 invariants (replay, dry-run==execution as a law) get their own suite in
 test_invariants.py; this file pins the mechanics."""
 
+from typing import Sequence
+
 import pytest
 
+from kg_contracts.candidates import Candidate
+from kg_contracts.curation import FailureKind, ValidationDecision
 from kg_contracts.ingestion import IngestJob, IngestReport
+from kg_contracts.stores import (
+    SubmissionOutcome,
+    SubmissionResult,
+    SubmissionStatus,
+)
 from kg_contracts.testing.memory import MemoryCandidateSink
-from kgis.builders import EntityCandidateBuilder, SourceScoring
+from kgis.builders import (
+    BuildContext,
+    EntityCandidateBuilder,
+    RelationCandidateBuilder,
+    SourceScoring,
+)
 from kgis.clock import FixedClock
 from kgis.errors import SourceReadError
 from kgis.ids import DeterministicIdStrategy
 from kgis.normalize import FieldSpec, SchemaNormalizer
 from kgis.ontology import Ontology
 from kgis.pipeline import IngestPipeline
+from kgis.records import NormalizedRecord
 from kgis.sources.iterable_reader import IterableRecordReader
 
 from scenarios import NOW, PLAYERS, build_pipeline
@@ -236,6 +251,212 @@ class TestElapsedTime:
     ) -> None:
         build_pipeline(sink=sink).run()
         assert all(c.created_at == NOW for c in sink.received())
+
+
+def _timed_schema() -> SchemaNormalizer:
+    return SchemaNormalizer(
+        [
+            FieldSpec(name="id", type="str", required=True),
+            FieldSpec(name="team", type="str"),
+            FieldSpec(name="start", type="datetime"),
+            FieldSpec(name="end", type="datetime"),
+        ]
+    )
+
+
+def _timed_relation_builder() -> RelationCandidateBuilder:
+    return RelationCandidateBuilder(
+        relation_type="PLAYS_FOR",
+        subject_type="Player",
+        subject_namespace="usssa",
+        subject_key_field="id",
+        object_type="Team",
+        object_namespace="usssa",
+        object_key_field="team",
+        valid_from_field="start",
+        valid_to_field="end",
+    )
+
+
+class _ExplodingBuilder:
+    """A builder that raises a *programmer* error, not a data error.
+
+    Used to prove the build boundary catches data faults specifically and
+    lets a genuine bug propagate — a `KeyError` here is never quarantined as
+    a bad record.
+    """
+
+    @property
+    def required_fields(self) -> tuple[str, ...]:
+        return ()
+
+    def build(self, record: NormalizedRecord, context: BuildContext) -> Sequence[Candidate]:
+        raise KeyError("this is a bug, not bad data")
+
+
+class TestBuildFailureIsolation:
+    """Fix: a data-dependent failure at *build* time is one bad record, not a
+    dead run — and it never admits a partial set of candidates from that row."""
+
+    def test_a_missing_relation_endpoint_rejects_the_record_not_the_run(
+        self, sink: MemoryCandidateSink
+    ) -> None:
+        """The relation builder requires `team`; a null one is rejected before
+        any builder runs, so the entity/attribute for that row are never
+        partially admitted (the composite's required_fields are auto-wired)."""
+        records = [
+            {"id": "9", "name": "NoTeam", "team": "", "height_cm": "170"},  # empty endpoint
+            {"id": "2", "name": "Grace", "team": "10", "height_cm": "175"},  # a valid row
+        ]
+        report = build_pipeline(records=records, sink=sink).run()
+        assert report.records_invalid == 1
+        assert report.records_valid == 1
+        # No partial admission: the bad row contributed *nothing*, not just no
+        # relation. Every candidate in the sink is the good row's.
+        assert {c.source_coordinates.fragment for c in sink.received()} == {"index=1"}
+
+    def test_an_inverted_valid_time_interval_rejects_the_record(
+        self, sink: MemoryCandidateSink
+    ) -> None:
+        """`valid_from > valid_to` only fails inside the contract model, at
+        build time — it must still land as a record rejection, not an abort."""
+        records = [
+            {"id": "1", "team": "10", "start": "2026-12-31T00:00:00+00:00",
+             "end": "2026-01-01T00:00:00+00:00"},  # inverted interval
+            {"id": "2", "team": "10", "start": "2026-01-01T00:00:00+00:00",
+             "end": "2026-12-31T00:00:00+00:00"},  # a valid row
+        ]
+        report = build_pipeline(
+            records=records,
+            normalizer=_timed_schema(),
+            builder=_timed_relation_builder(),
+            sink=sink,
+        ).run()
+        assert report.records_invalid == 1
+        assert report.records_valid == 1
+        assert len(sink.received()) == 1
+        assert sink.received()[0].source_coordinates.fragment == "index=1"
+        assert report.validation_failures[0].failure_kind is FailureKind.BAD_DATA
+
+    def test_a_bad_dynamic_entity_type_rejects_the_record(
+        self, sink: MemoryCandidateSink
+    ) -> None:
+        """A per-row `entity_type` that violates the `EntityRef` pattern fails
+        only when the ref is constructed, at build time. Still one bad row."""
+        schema = SchemaNormalizer(
+            [
+                FieldSpec(name="id", type="str", required=True),
+                FieldSpec(name="kind", type="str"),
+            ]
+        )
+        builder = EntityCandidateBuilder(
+            entity_type_field="kind", namespace="usssa", key_field="id"
+        )
+        records = [
+            {"id": "1", "kind": "not a type"},  # invalid entity_type (spaces, lowercase)
+            {"id": "2", "kind": "Player"},  # a valid row
+        ]
+        report = build_pipeline(
+            records=records, normalizer=schema, builder=builder, sink=sink
+        ).run()
+        assert report.records_invalid == 1
+        assert report.records_valid == 1
+        assert [c.source_coordinates.fragment for c in sink.received()] == ["index=1"]
+
+    def test_a_programmer_error_in_a_builder_still_propagates(
+        self, sink: MemoryCandidateSink
+    ) -> None:
+        """The boundary catches *data* faults, never bugs: a `KeyError` from a
+        builder is a defect and must not be silently quarantined as bad data."""
+        with pytest.raises(KeyError, match="this is a bug"):
+            build_pipeline(
+                records=[PLAYERS[0]], builder=_ExplodingBuilder(), sink=sink
+            ).run()
+
+
+class RejectingSink:
+    """A `CandidateSink` that rejects every candidate with `INVALID`.
+
+    Models a sink whose synchronous well-formedness check refuses a
+    candidate the pipeline itself was willing to submit — the case
+    `IngestionReport.succeeded` must not paper over.
+    """
+
+    def submit(self, candidates: Sequence[Candidate]) -> SubmissionResult:
+        return SubmissionResult(
+            outcomes=tuple(
+                SubmissionOutcome(
+                    candidate_id=c.candidate_id,
+                    status=SubmissionStatus.INVALID,
+                    reason="sink refused it",
+                    trace_id=c.trace_id,
+                )
+                for c in candidates
+            )
+        )
+
+
+class TestSinkRejectionCountsAgainstSuccess:
+    """Fix: a sink returning INVALID means the run did not succeed."""
+
+    def test_a_sink_invalid_makes_succeeded_false(self) -> None:
+        report = build_pipeline(sink=RejectingSink()).run()
+        assert report.invalid == 9
+        assert report.candidates_submitted == 0
+        assert report.succeeded is False
+
+
+class _RejectFirstValidator:
+    """A candidate validator that rejects the first candidate it sees and
+    accepts every one after — regardless of semantic key.
+
+    Proves the pipeline does not let a *rejected* candidate reserve a
+    semantic key: if it did, a later valid candidate sharing that key would
+    be silently suppressed instead of getting its own verdict.
+    """
+
+    policy_version = "test"
+
+    def __init__(self) -> None:
+        self._seen = 0
+
+    def validate(self, candidate: Candidate) -> ValidationDecision:
+        self._seen += 1
+        rejected = self._seen == 1
+        return ValidationDecision(
+            candidate_id=candidate.candidate_id,
+            valid=not rejected,
+            failure_kind=FailureKind.BAD_DATA if rejected else None,
+            reasons=("rejected the first one",) if rejected else (),
+            policy_version=self.policy_version,
+            trace_id=candidate.trace_id,
+        )
+
+
+class TestRejectedCandidateDoesNotReserveTheKey:
+    """Fix: the semantic key is reserved only after validation succeeds."""
+
+    def test_a_rejected_first_candidate_does_not_suppress_a_later_valid_one(
+        self, sink: MemoryCandidateSink
+    ) -> None:
+        # Two identical rows → same semantic keys. The validator rejects the
+        # first entity candidate; the second row's identical-key entity must
+        # still be validated and admitted, not suppressed as a duplicate.
+        records = [PLAYERS[0], PLAYERS[0]]
+        builder = EntityCandidateBuilder(
+            entity_type="Player", namespace="usssa", key_field="id"
+        )
+        report = build_pipeline(
+            records=records,
+            builder=builder,
+            candidate_validator=_RejectFirstValidator(),
+            sink=sink,
+        ).run()
+        assert report.candidates_built == 2
+        assert report.candidates_rejected == 1  # the first
+        assert report.candidates_suppressed == 0  # the second was NOT suppressed
+        assert report.candidates_submitted == 1  # the second reached the sink
+        assert len(sink.received()) == 1
 
 
 class TestBatching:

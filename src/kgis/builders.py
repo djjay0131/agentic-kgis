@@ -51,7 +51,7 @@ from kg_contracts.candidates import (
 from kg_contracts.evidence import ValidPeriod
 from kg_contracts.identity import EntityRef
 from kgis.clock import Clock
-from kgis.errors import ConfigurationError
+from kgis.errors import ConfigurationError, RecordDataError
 from kgis.ids import IdStrategy
 from kgis.records import NormalizedRecord
 
@@ -111,10 +111,11 @@ class CandidateBuilder(Protocol):
     def required_fields(self) -> tuple[str, ...]:
         """Fields this builder cannot work without.
 
-        Declared rather than discovered so the pipeline can wire a validator
-        for them automatically and reject the record *before* construction —
-        and so a builder pointed at a field the normalizer never produces
-        fails at assembly, not silently at row 40,000.
+        Declared rather than discovered so the pipeline *does* wire a
+        `RequiredValuesValidator` for them automatically and reject the
+        record before construction — and so a builder pointed at a field
+        the normalizer never produces fails at assembly, not silently at
+        row 40,000.
         """
         ...
 
@@ -205,7 +206,7 @@ class EntityCandidateBuilder:
         so a relation's subject and the entity it points at cannot drift apart."""
         key = _text(record, self._key_field)
         if key is None:
-            raise ValueError(f"entity key field {self._key_field!r} is empty")
+            raise RecordDataError(f"entity key field {self._key_field!r} is empty")
         entity_type = self._resolve_entity_type(record)
         return EntityRef(entity_type=entity_type, namespace=self._namespace, key=key)
 
@@ -215,7 +216,7 @@ class EntityCandidateBuilder:
         assert self._entity_type_field is not None  # guaranteed by the constructor
         entity_type = _text(record, self._entity_type_field)
         if entity_type is None:
-            raise ValueError(f"entity type field {self._entity_type_field!r} is empty")
+            raise RecordDataError(f"entity type field {self._entity_type_field!r} is empty")
         return entity_type
 
     def build(self, record: NormalizedRecord, context: BuildContext) -> Sequence[Candidate]:
@@ -430,7 +431,7 @@ class RelationCandidateBuilder:
     ) -> EntityRef:
         key = _text(record, field)
         if key is None:
-            raise ValueError(f"relation endpoint field {field!r} is empty")
+            raise RecordDataError(f"relation endpoint field {field!r} is empty")
         return EntityRef(entity_type=entity_type, namespace=namespace, key=key)
 
 

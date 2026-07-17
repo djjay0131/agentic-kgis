@@ -22,7 +22,7 @@ from kgis.builders import (
     entity_semantic_key,
 )
 from kgis.clock import Clock, FixedClock, SystemClock
-from kgis.errors import ConfigurationError, KgisError, SourceReadError
+from kgis.errors import ConfigurationError, KgisError, RecordDataError, SourceReadError
 from kgis.ids import DeterministicIdStrategy, IdStrategy, RandomIdStrategy, new_run_id
 from kgis.normalize import (
     FieldSpec,
@@ -103,5 +103,6 @@ __all__ = [
     # errors
     "ConfigurationError",
     "KgisError",
+    "RecordDataError",
     "SourceReadError",
 ]

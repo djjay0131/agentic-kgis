@@ -27,6 +27,23 @@ class SourceReadError(KgisError):
     """
 
 
+class RecordDataError(KgisError, ValueError):
+    """One record's data made candidate construction impossible.
+
+    Raised by builders for data-dependent failures that only surface at
+    build time — an empty relation endpoint, an empty dynamic-type field.
+    The pipeline catches it (together with pydantic validation errors from
+    contract models) at the build boundary and converts it into a structured
+    record rejection, so one bad row never aborts the run and never admits a
+    partial set of candidates.
+
+    Deliberately narrow: a plain `ValueError` or `TypeError` from a builder
+    is a bug and still propagates. Only failures a builder can attribute to
+    the *record* belong here. Subclasses `ValueError` because that is what
+    these checks raised before the boundary existed.
+    """
+
+
 class ConfigurationError(KgisError):
     """A pipeline was assembled with incoherent configuration.
 
