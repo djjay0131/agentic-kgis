@@ -50,3 +50,15 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   report: `docs/sprints/2026-07-14-sprint-1-core-ingestion.md`. NOT in
   scope (later plans): graph writes, entity resolution, LLM extraction,
   GraphRAG, persistent ledger, evidence registry, CLI.
+- 2026-07-17: **PR #9 review round 2 addressed.** Three blocking correctness
+  findings fixed on `feature/sprint-1-core-ingestion`: (1) data-dependent
+  build failures isolated per record — `RequiredValuesValidator` auto-wired
+  from `builder.required_fields`, plus a `RecordDataError | ValidationError`
+  build boundary that turns build-time faults (inverted valid-time, bad
+  dynamic type) into record rejections with no partial candidates, while
+  genuine builder bugs still propagate; (2) `semantic_key` reserved only
+  after candidate validation succeeds, so a rejected candidate cannot
+  suppress a later valid same-key one; (3) `IngestionReport.succeeded`
+  counts sink-side `INVALID`. +6 tests (488 passed), ruff/mypy strict clean.
+  ADR candidate 0003 split into 0003-A (ULID helper) + 0004 (attribute
+  vocabulary). 0001 stays local; 0002 facade deferred.
