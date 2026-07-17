@@ -21,7 +21,7 @@ _FACT = {"graph_id": "g1", "candidate_kind": "entity", "semantic_key": "player/u
 class TestEncoderMatchesContract:
     """`kgis.ids` reimplements the Crockford base32 encoder rather than reach
     into `kg_contracts._ulid` (a private module of another package) — see
-    docs/adr/candidates/0003. That is the right coupling trade, but it leaves
+    docs/adr/candidates/0003-a. That is the right coupling trade, but it leaves
     a latent hazard: if the contract's alphabet or layout ever changed, a kgis
     ID would silently stop matching a real ULID's shape. This test is the
     tripwire — it deliberately imports the contract's private encoder so the

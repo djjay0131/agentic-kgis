@@ -18,4 +18,10 @@ future plan will hit again.
 |---|---|---|
 | [0001](0001-record-scoped-validation.md) | `ValidationDecision` is keyed on `candidate_id`, but records are rejected before candidates exist | Two-tier validation: record-tier `RecordValidation` (kgis) + candidate-tier `ValidationDecision` (contract) |
 | [0002](0002-source-adapter-composition.md) | `Source.fetch()` yields `Candidate`, so the read/normalize/validate/build stages cannot sit upstream of a `Source` | Stages compose *inward*; `IngestPipeline` is the composition, `Source` conformance deferred |
-| [0003](0003-contract-gaps-ulid-and-attributes.md) | No public deterministic-ID helper on `kg_contracts`; `GraphDescriptor` declares no attribute vocabulary | Reimplemented Crockford encoder in `kgis.ids`; ontology attributes left unconstrained from a descriptor |
+| [0003-A](0003-a-public-deterministic-id-helper.md) | No public deterministic-ID helper on `kg_contracts` (the Crockford encoder is private) | Reimplemented Crockford encoder in `kgis.ids`, guarded by a drift test |
+| [0004](0004-graph-descriptor-attribute-vocabulary.md) | `GraphDescriptor` declares node and edge types but no attribute vocabulary | Ontology attributes left unconstrained when read from a descriptor |
+
+> Note: 0003-A and 0004 were split from a single joint candidate (originally
+> `0003-contract-gaps-ulid-and-attributes`) per the PR #9 review — the ID
+> helper is a small additive change, the attribute vocabulary needs
+> registry/advisor review, so they are dispositioned separately.
