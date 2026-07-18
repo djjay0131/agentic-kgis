@@ -1,5 +1,45 @@
 # Active Context — agentic-kgis
 
+Update 2026-07-17: **PR #9 review round 2 addressed.** A fresh full review of
+PR #9 (Sprint 1) raised three blocking correctness findings; all three are
+fixed on `feature/sprint-1-core-ingestion`. (1) Data-dependent build failures
+no longer abort the run — the pipeline auto-wires
+`RequiredValuesValidator(builder.required_fields)`, and build-time faults
+(inverted valid-time, bad dynamic type, contract-model rejections) are caught
+at a defined boundary (`RecordDataError | pydantic.ValidationError`) and become
+structured record rejections; no partial candidates from a failed row; genuine
+builder bugs still propagate. (2) A rejected candidate no longer reserves its
+`semantic_key` — `seen_keys` is updated only after candidate validation
+succeeds. (3) `IngestionReport.succeeded` now counts sink-side `INVALID`.
+New `RecordDataError` in `kgis.errors`. +6 tests (488 passed), ruff/mypy strict
+clean. ADR candidate 0003 split into 0003-A (public ULID helper) and 0004
+(GraphDescriptor attribute vocabulary) per the reviewer — unrelated decisions,
+different blast radii. ADR-candidate dispositions from the review: 0001 keep
+local, promote to contract only via a separate PR after KGCS confirms the
+shape; 0002 defer the `Source.fetch()` facade until a real consumer needs it.
+NEXT (author): push branch, post the author-response comment on PR #9, request
+another review pass. Then Plan 2 (candidate ledger + evidence registry).
+
+Update 2026-07-14: **Sprint 1 (Core Ingestion Engine) complete** on
+`feature/sprint-1-core-ingestion`. First deterministic
+structured-ingestion pipeline in `src/kgis/`, on `kg_contracts` v2 only:
+reader (iterable/CSV/JSON) → normalize (total) → validate (two-tier) →
+build candidates (entity/relation/attribute) → `CandidateSink` →
+`IngestionReport`. `IngestPipeline` satisfies `IngestJob`; dry-run,
+idempotency (intra-run suppression + cross-run sink dedup + injectable
+deterministic IDs), full DI. 481 tests repo-wide, `ruff`/`mypy src`
+strict green, 8 small commits. Three ADR candidates in
+`docs/adr/candidates/` for reviewer/owner disposition (0001 record-scoped
+validation, 0002 Source composition, 0003 ULID helper + attribute
+vocabulary gaps). Report:
+`docs/sprints/2026-07-14-sprint-1-core-ingestion.md`. NEXT (author):
+push branch + open draft PR (author responsibility per `CONTRIBUTING.md`);
+then reviewer reviews and the ADR candidates get dispositioned. After that,
+Plan 2 (candidate ledger + evidence registry) makes idempotency durable and
+lets the null-value rule record absence via `Evidence` ABSENT. Deferred
+within kgis: `Source.fetch()` facade, CLI, streaming/bounded dedup. Scope
+held: no graph writes, no ER, no LLM extraction, no GraphRAG this sprint.
+
 Update 2026-07-12: **Plan 1 v2 complete.** `kg_contracts` public API v2
 shipped (Tasks 3–18 implemented, Task 19 wired the top-level export
 surface): security context/deletion semantics, evidence, immutable
