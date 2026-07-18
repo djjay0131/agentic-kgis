@@ -1,24 +1,31 @@
 # Active Context — agentic-kgis
 
-Update 2026-07-17: **PR #9 review round 2 addressed.** A fresh full review of
-PR #9 (Sprint 1) raised three blocking correctness findings; all three are
-fixed on `feature/sprint-1-core-ingestion`. (1) Data-dependent build failures
-no longer abort the run — the pipeline auto-wires
-`RequiredValuesValidator(builder.required_fields)`, and build-time faults
-(inverted valid-time, bad dynamic type, contract-model rejections) are caught
-at a defined boundary (`RecordDataError | pydantic.ValidationError`) and become
-structured record rejections; no partial candidates from a failed row; genuine
-builder bugs still propagate. (2) A rejected candidate no longer reserves its
-`semantic_key` — `seen_keys` is updated only after candidate validation
-succeeds. (3) `IngestionReport.succeeded` now counts sink-side `INVALID`.
-New `RecordDataError` in `kgis.errors`. +6 tests (488 passed), ruff/mypy strict
-clean. ADR candidate 0003 split into 0003-A (public ULID helper) and 0004
-(GraphDescriptor attribute vocabulary) per the reviewer — unrelated decisions,
-different blast radii. ADR-candidate dispositions from the review: 0001 keep
-local, promote to contract only via a separate PR after KGCS confirms the
-shape; 0002 defer the `Source.fetch()` facade until a real consumer needs it.
-NEXT (author): push branch, post the author-response comment on PR #9, request
-another review pass. Then Plan 2 (candidate ledger + evidence registry).
+Update 2026-07-18: **PR #9 MERGED — Sprint 1 fully closed.** Merged to `main`
+(merge commit `b2ff131`) after the round-2 review; all three blocking
+correctness findings landed. Sprint 1 delivered the first deterministic
+structured-ingestion pipeline in `src/kgis/` on `kg_contracts` v2, 488 tests
+repo-wide, `ruff`/`mypy src` strict green. `kg_contracts` remains **frozen and
+unchanged** by the whole sprint. Four ADR candidates now sit in
+`docs/adr/candidates/` awaiting owner promotion, with reviewer dispositions
+recorded: **0001** record-scoped validation — keep local, promote to contract
+only via a separate PR after KGCS confirms the shared shape; **0002**
+`Source.fetch()` facade — defer until a real consumer needs it; **0003-A**
+public deterministic-ID helper on `kg_contracts` — likely small additive
+promotion; **0004** `GraphDescriptor` attribute vocabulary — needs
+registry/advisor review. NEXT: **awaiting the next task from the owner.** The
+planned next body of work is Plan 2 (candidate ledger + evidence registry),
+which makes idempotency durable and lets the null-value rule record absence via
+`Evidence` ABSENT. Local gotcha: the working tree carries pervasive CRLF↔LF
+line-ending noise on ~71 files (no `.gitattributes`, no `core.autocrlf`);
+commits must stay content-only — normalize touched files to LF before staging.
+
+Round-2 review fixes, for the record (in `main` via PR #9): (1) data-dependent
+build failures isolated per record — `RequiredValuesValidator(builder.required_fields)`
+auto-wired + a `RecordDataError | pydantic.ValidationError` build boundary; no
+partial candidates from a failed row; genuine builder bugs still propagate.
+(2) `semantic_key` reserved only after candidate validation succeeds. (3)
+`IngestionReport.succeeded` counts sink-side `INVALID`. New `RecordDataError`
+in `kgis.errors`.
 
 Update 2026-07-14: **Sprint 1 (Core Ingestion Engine) complete** on
 `feature/sprint-1-core-ingestion`. First deterministic

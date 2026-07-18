@@ -62,3 +62,22 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   counts sink-side `INVALID`. +6 tests (488 passed), ruff/mypy strict clean.
   ADR candidate 0003 split into 0003-A (ULID helper) + 0004 (attribute
   vocabulary). 0001 stays local; 0002 facade deferred.
+- 2026-07-18: **PR #9 MERGED to `main`** (merge commit `b2ff131`). Sprint 1
+  (Core Ingestion Engine) fully closed; `kg_contracts` frozen and unchanged by
+  the sprint. Four ADR candidates await owner promotion with reviewer
+  dispositions recorded (0001 local, 0002 defer, 0003-A likely additive
+  promotion, 0004 needs registry/advisor review). Next planned work: Plan 2
+  (candidate ledger + evidence registry); currently awaiting the owner's next
+  task.
+
+Works (as of Sprint 1 merge): `kgis` structured-ingestion pipeline —
+reader (iterable/CSV/JSON) → total normalize → two-tier validation →
+entity/relation/attribute builders → `CandidateSink` → `IngestionReport`;
+`IngestPipeline` satisfies `IngestJob`; dry-run == execution except submission;
+two-layer idempotency (intra-run semantic-key suppression + cross-run sink
+dedup) with injectable deterministic IDs; per-record failure isolation at
+every stage (record validation *and* the build boundary); honest-null coverage
+reporting; full DI. Reusable `RecordReaderContract` in `kgis.testing`.
+Not built yet: candidate ledger + evidence registry (Plan 2); LLM extraction /
+entity resolution / graph writes / GraphRAG (later plans); `kg_eval` (Plan 6);
+KGCS Plans 3/5/6/7; `Source.fetch()` facade and CLI (deferred within kgis).

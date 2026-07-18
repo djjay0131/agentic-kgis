@@ -14,6 +14,14 @@ These arose from building `kgis` (structured ingestion) against the merged
 workaround that respects the current contract — but each names a seam that a
 future plan will hit again.
 
+**Status:** all four shipped in **PR #9 (merged to `main` 2026-07-18)** as
+open candidates. The Sprint 1 reviewer recorded dispositions in the PR thread —
+0001 keep local (promote to contract only via a separate PR after KGCS confirms
+the shared shape); 0002 defer the facade until a real consumer needs it; 0003-A
+likely a small additive contract promotion; 0004 needs registry/advisor review.
+None has yet been promoted to a numbered, accepted ADR — that remains the
+architecture owner's call.
+
 | Candidate | Weakness | Sprint 1 workaround |
 |---|---|---|
 | [0001](0001-record-scoped-validation.md) | `ValidationDecision` is keyed on `candidate_id`, but records are rejected before candidates exist | Two-tier validation: record-tier `RecordValidation` (kgis) + candidate-tier `ValidationDecision` (contract) |

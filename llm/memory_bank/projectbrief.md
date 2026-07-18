@@ -10,5 +10,7 @@ Non-negotiables: KGIS never writes to a raw GraphStore — always through
 KGCS's CuratedGraphStore. Candidates (not writes) are the output of
 ingestion. Contracts contain no engine, LLM, or I/O code.
 
-Authority: docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md
-Governance: agentic-governance v0.1 (docs/governance-delta.md)
+Authority: docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md (spec v2)
+Governance: agentic-governance v0.2 (docs/governance-delta.md) — levels L0–L3,
+workflow-selection; steward INACTIVE. Workflow: Issue → Branch → Draft PR →
+Review → Merge; no direct commits to main.
