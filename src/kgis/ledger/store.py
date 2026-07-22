@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from collections.abc import Sequence
@@ -19,6 +20,7 @@ from kg_contracts.stores import (
     SubmissionStatus,
 )
 
+from kgis.ledger.audit import SqliteAuditStream
 from kgis.ledger.config import ConsumerProfile, IdentityMode, IdentityResolver
 from kgis.ledger.lifecycle import assert_transition
 from kgis.ledger.row import LedgerRow, _iso, dedup_key
@@ -53,6 +55,7 @@ class SqliteCandidateLedger:
         self._now = now if now is not None else (lambda: datetime.now(UTC))
         self._profile = profile if profile is not None else ConsumerProfile()
         self._resolver = resolver
+        self._audit = SqliteAuditStream(self._conn)
 
     def close(self) -> None:
         self._conn.close()
@@ -65,7 +68,10 @@ class SqliteCandidateLedger:
         *,
         reason: str | None,
         actor: str,
+        kind: str = "transition",
     ) -> int:
+        now = _iso(self._now())
+        assert now is not None  # self._now() never returns None; _iso's None case is unreachable here
         cur = self._conn.execute(
             "INSERT INTO ledger_transitions (candidate_id, from_state, to_state, reason, actor, at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -75,10 +81,25 @@ class SqliteCandidateLedger:
                 to_state.value,
                 reason,
                 actor,
-                _iso(self._now()),
+                now,
             ),
         )
-        return int(cur.lastrowid or 0)
+        transition_id = int(cur.lastrowid or 0)
+        row = self.row(candidate_id)
+        payload_hash = row.payload_hash if row is not None else ""
+        self._audit.append(
+            candidate_id=candidate_id,
+            transition_id=transition_id,
+            kind=kind,
+            from_state=from_state.value if from_state is not None else None,
+            to_state=to_state.value,
+            payload_hash=payload_hash,
+            reason=reason,
+            actor=actor,
+            recorded_at=now,
+            detail=json.dumps({"reason": reason, "actor": actor}),
+        )
+        return transition_id
 
     def _duplicate_outcome(self, candidate: Candidate) -> SubmissionOutcome:
         return SubmissionOutcome(
@@ -211,7 +232,7 @@ class SqliteCandidateLedger:
             )
             self._insert_transition(
                 candidate_id, row.processing_state, row.processing_state,
-                reason=f"revoked: {reason}", actor=actor,
+                reason=f"revoked: {reason}", actor=actor, kind="revoke",
             )
         except Exception:
             self._conn.rollback()
@@ -232,7 +253,7 @@ class SqliteCandidateLedger:
             )
             self._insert_transition(
                 candidate_id, row.processing_state, row.processing_state,
-                reason=f"erased: {reason}", actor=actor,
+                reason=f"erased: {reason}", actor=actor, kind="erase",
             )
         except Exception:
             self._conn.rollback()
