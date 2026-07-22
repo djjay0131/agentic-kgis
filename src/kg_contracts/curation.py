@@ -41,6 +41,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from kg_contracts._frozen import FrozenDictFloat, FrozenDictObject
 from kg_contracts._ulid import new_ulid
 from kg_contracts.policy import AdjudicationRoute
 
@@ -97,15 +98,19 @@ class CurationOperation(BaseModel):
 
     `reversal_data` carries whatever is needed to undo this operation later
     (pre-merge member set, lineage, affected projections) — rollback is a
-    compensating operation, not deletion of history.
+    compensating operation, not deletion of history. `payload` and
+    `reversal_data` are read-only at rest, not just attribute-level frozen:
+    both are `FrozenDict` fields (Issue #7), so in-place mutation of the
+    dict itself raises `TypeError` — `frozen=True` alone only blocks
+    reassigning the field, it does not stop `op.payload["x"] = 1`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     operation_id: str = Field(default_factory=lambda: "op_" + new_ulid())
     type: CurationOperationType
-    payload: dict[str, object]
-    reversal_data: dict[str, object] = Field(default_factory=dict)
+    payload: FrozenDictObject
+    reversal_data: FrozenDictObject = Field(default_factory=dict, validate_default=True)
 
 
 class Precondition(BaseModel):
@@ -163,7 +168,7 @@ class ResolutionDecision(BaseModel):
     resolved_identity: str | None
     create_new_identity: bool
     route: AdjudicationRoute
-    score_vector: dict[str, float]
+    score_vector: FrozenDictFloat
     matcher_version: str | None
     snapshot_version: str = Field(min_length=1)
     trace_id: str
@@ -221,7 +226,7 @@ class ReviewItem(BaseModel):
 
     item_id: str = Field(default_factory=lambda: "rv_" + new_ulid())
     kind: str
-    payload: dict[str, object]
+    payload: FrozenDictObject
     priority: Literal["P1", "P2", "P3"] = "P3"
     reason: str
     enqueued_at: datetime
@@ -239,7 +244,7 @@ class ReviewDecision(BaseModel):
     item_id: str
     action: ReviewAction
     actor: str
-    edited_payload: dict[str, object] | None = None
+    edited_payload: FrozenDictObject | None = None
     note: str | None = None
     decided_at: datetime
 
@@ -270,12 +275,13 @@ class ReviewQueue(Protocol):
 class AuditRecord(BaseModel):
     """An audit-stream entry for one applied operation (spec §7.8).
 
-    Immutability here is attribute-level only: `frozen=True` blocks
-    reassigning a field after construction but does not, by itself, make the
-    audit stream append-only at rest. That guarantee — no in-place edits or
-    deletions once written — is enforced by the ledger/store layer (Plan 2/3),
-    not by this model. The audit stream is the training corpus that later
-    justifies raising auto-promotion thresholds.
+    `score_vector` is read-only at rest: it is a `FrozenDict` field
+    (Issue #7), so `frozen=True` (blocking reassignment) is joined by
+    in-place mutation of the dict itself raising `TypeError`. Append-only
+    at the stream level — no in-place edits or deletions of an already
+    written record — is still enforced by the ledger/store layer (Plan
+    2/3), not by this model. The audit stream is the training corpus that
+    later justifies raising auto-promotion thresholds.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -283,7 +289,7 @@ class AuditRecord(BaseModel):
     audit_id: str = Field(default_factory=lambda: "au_" + new_ulid())
     operation_id: str
     decided_by: str
-    score_vector: dict[str, float]
+    score_vector: FrozenDictFloat
     evidence_ids: tuple[str, ...]
     policy_version: str
     trace_id: str

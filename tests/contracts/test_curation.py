@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -273,6 +274,20 @@ def test_duck_typed_fake_satisfies_review_queue():
     )
     fake.resolve(decision)
     assert fake.history(item_id) == [decision]
+
+
+def test_curation_operation_payload_is_frozen_and_round_trips():
+    op = CurationOperation(
+        type=CurationOperationType.CREATE_IDENTITY,
+        payload={"assertion_id": "a1", "value": 3},
+    )
+    with pytest.raises(TypeError):
+        op.payload["value"] = 999  # type: ignore[index]
+    with pytest.raises(TypeError):
+        op.reversal_data["x"] = 1  # type: ignore[index]
+    dumped = op.model_dump_json()
+    assert json.loads(dumped)["payload"] == {"assertion_id": "a1", "value": 3}
+    assert CurationOperation.model_validate_json(dumped) == op
 
 
 def test_audit_record_is_frozen_and_immutable():
