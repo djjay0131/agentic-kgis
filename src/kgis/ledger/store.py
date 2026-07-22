@@ -19,6 +19,7 @@ from kg_contracts.stores import (
     SubmissionStatus,
 )
 
+from kgis.ledger.config import ConsumerProfile, IdentityMode, IdentityResolver
 from kgis.ledger.lifecycle import assert_transition
 from kgis.ledger.row import LedgerRow, _iso, dedup_key
 from kgis.ledger.schema import open_ledger_db
@@ -40,6 +41,8 @@ class SqliteCandidateLedger:
         database: str | os.PathLike[str] | sqlite3.Connection = ":memory:",
         *,
         now: Callable[[], datetime] | None = None,
+        profile: ConsumerProfile | None = None,
+        resolver: IdentityResolver | None = None,
     ) -> None:
         if isinstance(database, sqlite3.Connection):
             self._conn = database
@@ -48,6 +51,8 @@ class SqliteCandidateLedger:
         else:
             self._conn = open_ledger_db(database)
         self._now = now if now is not None else (lambda: datetime.now(UTC))
+        self._profile = profile if profile is not None else ConsumerProfile()
+        self._resolver = resolver
 
     def close(self) -> None:
         self._conn.close()
@@ -93,6 +98,20 @@ class SqliteCandidateLedger:
                 ).fetchone()
                 if seen is not None:
                     outcomes.append(self._duplicate_outcome(candidate))
+                    continue
+                if (
+                    self._profile.identity_mode is IdentityMode.REJECT_ONLY
+                    and self._resolver is not None
+                    and self._resolver.is_ambiguous(candidate)
+                ):
+                    outcomes.append(
+                        SubmissionOutcome(
+                            candidate_id=candidate.candidate_id,
+                            status=SubmissionStatus.INVALID,
+                            reason="ambiguous identity match rejected (REJECT_ONLY)",
+                            trace_id=candidate.trace_id,
+                        )
+                    )
                     continue
                 row = LedgerRow.for_candidate(candidate, recorded_at=self._now())
                 try:
@@ -179,6 +198,54 @@ class SqliteCandidateLedger:
         updated = self.row(candidate_id)
         assert updated is not None  # just updated it
         return updated
+
+    def revoke(self, candidate_id: str, *, reason: str, actor: str) -> None:
+        row = self.row(candidate_id)
+        if row is None or row.is_erased:
+            raise KeyError(f"no live ledger entry for candidate_id {candidate_id!r}")
+        try:
+            self._conn.execute(
+                "UPDATE ledger_entries SET revoked_at = ?, revocation_reason = ? "
+                "WHERE candidate_id = ?",
+                (_iso(self._now()), reason, candidate_id),
+            )
+            self._insert_transition(
+                candidate_id, row.processing_state, row.processing_state,
+                reason=f"revoked: {reason}", actor=actor,
+            )
+        except Exception:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
+
+    def erase(self, candidate_id: str, *, reason: str, actor: str) -> None:
+        if not self._profile.erasure_enabled:
+            raise PermissionError("erasure not enabled for this consumer profile")
+        row = self.row(candidate_id)
+        if row is None:
+            raise KeyError(f"no ledger entry for candidate_id {candidate_id!r}")
+        try:
+            self._conn.execute(
+                "UPDATE ledger_entries SET payload_json = NULL, erased_at = ?, "
+                "erasure_reason = ? WHERE candidate_id = ?",
+                (_iso(self._now()), reason, candidate_id),
+            )
+            self._insert_transition(
+                candidate_id, row.processing_state, row.processing_state,
+                reason=f"erased: {reason}", actor=actor,
+            )
+        except Exception:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
+
+    def is_revoked(self, candidate_id: str) -> bool:
+        row = self.row(candidate_id)
+        return row is not None and row.is_revoked
+
+    def is_erased(self, candidate_id: str) -> bool:
+        row = self.row(candidate_id)
+        return row is not None and row.is_erased
 
     def capabilities(self) -> AdapterCapabilities:
         return AdapterCapabilities(supports_temporal_queries=True)
