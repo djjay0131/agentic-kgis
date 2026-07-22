@@ -19,6 +19,7 @@ from kg_contracts.stores import (
     SubmissionStatus,
 )
 
+from kgis.ledger.lifecycle import assert_transition
 from kgis.ledger.row import LedgerRow, _iso, dedup_key
 from kgis.ledger.schema import open_ledger_db
 
@@ -141,6 +142,35 @@ class SqliteCandidateLedger:
             raise
         self._conn.commit()
         return SubmissionResult(outcomes=tuple(outcomes))
+
+    def transition(
+        self,
+        candidate_id: str,
+        to_state: ProcessingState,
+        *,
+        actor: str,
+        reason: str | None = None,
+        increment_retry: bool = False,
+        quarantine_reason: str | None = None,
+    ) -> LedgerRow:
+        row = self.row(candidate_id)
+        if row is None or row.is_revoked or row.is_erased:
+            raise KeyError(f"no live ledger entry for candidate_id {candidate_id!r}")
+        assert_transition(row.processing_state, to_state)
+        new_retry = row.retry_count + (1 if increment_retry else 0)
+        new_quarantine = quarantine_reason if quarantine_reason is not None else row.quarantine_reason
+        self._conn.execute(
+            "UPDATE ledger_entries SET processing_state = ?, retry_count = ?, "
+            "quarantine_reason = ? WHERE candidate_id = ?",
+            (to_state.value, new_retry, new_quarantine, candidate_id),
+        )
+        self._insert_transition(
+            candidate_id, row.processing_state, to_state, reason=reason, actor=actor
+        )
+        self._conn.commit()
+        updated = self.row(candidate_id)
+        assert updated is not None  # just updated it
+        return updated
 
     def capabilities(self) -> AdapterCapabilities:
         return AdapterCapabilities(supports_temporal_queries=True)
