@@ -9,10 +9,6 @@ from __future__ import annotations
 
 from kg_contracts.curation import ProcessingState as PS
 
-TERMINAL_STATES: frozenset[PS] = frozenset(
-    {PS.ACCEPTED, PS.REJECTED, PS.INVALID, PS.OBSOLETE, PS.PERMANENT_ERROR}
-)
-
 LEGAL_TRANSITIONS: dict[PS, frozenset[PS]] = {
     PS.RECEIVED: frozenset(
         {PS.VALIDATED, PS.INVALID, PS.BLOCKED, PS.RETRYABLE_ERROR, PS.OBSOLETE}
@@ -33,6 +29,13 @@ LEGAL_TRANSITIONS: dict[PS, frozenset[PS]] = {
     PS.OBSOLETE: frozenset(),
     PS.PERMANENT_ERROR: frozenset(),
 }
+
+# Derived, not hand-maintained: a state is terminal iff it has no outgoing
+# legal transitions. This keeps terminal-state logic in sync with
+# LEGAL_TRANSITIONS by construction — no separate literal to desync.
+TERMINAL_STATES: frozenset[PS] = frozenset(
+    s for s, dsts in LEGAL_TRANSITIONS.items() if not dsts
+)
 
 
 class IllegalTransitionError(ValueError):

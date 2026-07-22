@@ -29,3 +29,12 @@ def test_terminal_states_have_no_exits():
 def test_illegal_transition_raises_naming_states():
     with pytest.raises(IllegalTransitionError, match="ACCEPTED.*RECEIVED"):
         assert_transition(PS.ACCEPTED, PS.RECEIVED)
+
+
+def test_illegal_transition_between_non_terminal_states_raises():
+    # BLOCKED's legal targets are {RECEIVED, REJECTED, INVALID}; OBSOLETE
+    # is not among them, and neither BLOCKED nor OBSOLETE is a terminal
+    # source here, so this guards against a typo over-permitting a
+    # mid-table edge (existing tests only exercise a TERMINAL source).
+    with pytest.raises(IllegalTransitionError, match="BLOCKED.*OBSOLETE"):
+        assert_transition(PS.BLOCKED, PS.OBSOLETE)
