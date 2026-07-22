@@ -67,3 +67,25 @@ def test_artifact_candidate():
     with pytest.raises(ValidationError):
         ArtifactCandidate(**ENV, semantic_key="k", artifact_type="cut_list",
                           artifact_hash="", source_uri="s3://b/x")
+
+
+def test_entity_candidate_properties_frozen_including_omitted_default():
+    c = EntityCandidate(**ENV, semantic_key="k", entity_type="Player",
+                        aliases=(PLAYER,), properties={"unit": "kg"})
+    with pytest.raises(TypeError):
+        c.properties["unit"] = "lb"  # type: ignore[index]
+
+    # properties omitted entirely -> default_factory=dict; must still be
+    # frozen (validate_default=True), not a silently mutable plain dict.
+    c2 = EntityCandidate(**ENV, semantic_key="k2", entity_type="Player",
+                         aliases=(PLAYER,))
+    with pytest.raises(TypeError):
+        c2.properties["unit"] = "lb"  # type: ignore[index]
+
+
+def test_relation_candidate_properties_frozen():
+    iid = new_identity_id("baseball")
+    c = RelationCandidate(**ENV, semantic_key="k", relation_type="PLAYS_FOR",
+                          subject=PLAYER, object=iid, properties={"season": "2026"})
+    with pytest.raises(TypeError):
+        c.properties["season"] = "2027"  # type: ignore[index]

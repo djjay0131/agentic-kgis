@@ -34,11 +34,14 @@ a hard `ValidationError` instead of a silently accepted, unvalidated field.
 """
 
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, TypeAdapter, model_validator
+from pydantic.functional_validators import PlainValidator
 
+from kg_contracts._frozen import FrozenDictObject, _make_validator
 from kg_contracts._ulid import new_ulid
 from kg_contracts.derivation import Derivation
 from kg_contracts.evidence import EvidenceRef, ValidPeriod
@@ -134,14 +137,31 @@ class Representation(BaseModel):
         return self
 
 
+FrozenRepresentations: TypeAlias = Annotated[
+    Mapping[str, Representation],
+    PlainValidator(_make_validator(Representation)),
+    PlainSerializer(lambda m: dict(m), return_type=dict),
+]
+"""`dict[str, Representation]`, at-rest-immutable (Issue #7). A literal
+`Annotated[...]` alias (not `frozen_dict(Representation)`'s call-return
+directly) so it type-checks under mypy --strict as a field annotation —
+see `kg_contracts._frozen.frozen_dict` for why a function call cannot back
+a type alias."""
+
+
 class CandidateEnvelope(BaseModel):
     """Shared base of all nine candidate variants (spec §5.2).
 
     Variants (Tasks 9-10) narrow `candidate_kind` to a `Literal`
-    discriminator and add variant-specific fields.
+    discriminator and add variant-specific fields. `validate_default=True`
+    is set here so it is inherited by every subclass: several
+    `default_factory=dict` fields below (here and on subclasses) are
+    `FrozenDict`-typed, and pydantic v2 skips validating default values by
+    default — without this flag an *omitted* field would silently stay a
+    plain, mutable `dict` instead of being frozen (Issue #7).
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 
     candidate_id: str = Field(default_factory=lambda: "cand_" + new_ulid())
     graph_id: str
@@ -154,7 +174,7 @@ class CandidateEnvelope(BaseModel):
     source_coordinates: SourceCoordinates
     semantic_key: str = Field(min_length=1)
     content_hash: str | None = None
-    representations: dict[str, Representation] = Field(default_factory=dict)
+    representations: FrozenRepresentations = Field(default_factory=dict)
     scores: CandidateScores
     trace_id: str = Field(default_factory=new_trace_id)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -173,7 +193,7 @@ class EntityCandidate(CandidateEnvelope):
     entity_type: str = Field(pattern=_ENTITY_TYPE_PATTERN)
     aliases: tuple[EntityRef, ...]
     display_name: str | None = None
-    properties: dict[str, object] = Field(default_factory=dict)
+    properties: FrozenDictObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _check_aliases(self) -> "EntityCandidate":
@@ -202,7 +222,7 @@ class RelationCandidate(CandidateEnvelope):
     candidate_kind: Literal["relation"] = "relation"
     relation_type: str
     subject: SubjectRef
-    properties: dict[str, object] = Field(default_factory=dict)
+    properties: FrozenDictObject = Field(default_factory=dict)
     object: SubjectRef
     valid_period: ValidPeriod | None = None
 
@@ -267,7 +287,7 @@ class ObservationCandidate(CandidateEnvelope):
     candidate_kind: Literal["observation"] = "observation"
     metric: str
     method: str | None = None
-    parameters: dict[str, object] = Field(default_factory=dict)
+    parameters: FrozenDictObject = Field(default_factory=dict)
     value: object = None
     payload: dict[str, object] = Field(default_factory=dict)
 
@@ -283,7 +303,7 @@ class DerivedAssertionCandidate(CandidateEnvelope):
 
     candidate_kind: Literal["derived_assertion"] = "derived_assertion"
     derivation: Derivation
-    conclusion: dict[str, object] = Field(default_factory=dict)
+    conclusion: FrozenDictObject = Field(default_factory=dict)
     payload: dict[str, object] = Field(default_factory=dict)
 
 

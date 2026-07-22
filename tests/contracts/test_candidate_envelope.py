@@ -73,3 +73,19 @@ def test_representations_are_named_views():
 def test_representation_exactly_one_payload():
     with pytest.raises(ValidationError, match="vector"):
         Representation(kind="vector", text="oops")
+
+
+def test_representations_frozen_at_rest_including_omitted_default():
+    e = _envelope(representations={
+        "raw_statement": Representation(kind="text", text="Player X bats left"),
+    })
+    with pytest.raises(TypeError):
+        e.representations["raw_statement"] = Representation(  # type: ignore[index]
+            kind="text", text="tampered")
+
+    # representations omitted entirely -> default_factory=dict; must still be
+    # frozen (validate_default=True), not a silently mutable plain dict.
+    e2 = _envelope()
+    with pytest.raises(TypeError):
+        e2.representations["x"] = Representation(  # type: ignore[index]
+            kind="text", text="z")
