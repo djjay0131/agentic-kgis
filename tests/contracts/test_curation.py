@@ -303,3 +303,58 @@ def test_audit_record_is_frozen_and_immutable():
     assert record.audit_id.startswith("au_")
     with pytest.raises(ValidationError):
         record.decided_by = "someone_else"
+    with pytest.raises(TypeError):
+        record.score_vector["name_similarity"] = 0.0  # type: ignore[index]
+
+
+def test_curation_operation_omitted_reversal_data_still_frozen():
+    # Regression: reversal_data used to rely on a per-field
+    # validate_default=True to force validation of the default_factory=dict
+    # value. That flag is now hoisted to the model config, so an omitted
+    # reversal_data must still validate to an immutable mapping, not a
+    # plain, mutable dict.
+    op = CurationOperation(
+        type=CurationOperationType.CREATE_IDENTITY,
+        payload={"assertion_id": "a1"},
+    )
+    assert op.reversal_data == {}
+    with pytest.raises(TypeError):
+        op.reversal_data["x"] = 1  # type: ignore[index]
+
+
+def test_resolution_decision_score_vector_is_frozen():
+    decision = ResolutionDecision(
+        candidate_id="cand_1",
+        resolved_identity="id_1",
+        create_new_identity=False,
+        route=AdjudicationRoute.AUTO,
+        score_vector={"name_similarity": 0.9},
+        matcher_version="v1",
+        snapshot_version="17",
+        trace_id="trace_1",
+    )
+    with pytest.raises(TypeError):
+        decision.score_vector["name_similarity"] = 0.0  # type: ignore[index]
+
+
+def test_review_item_payload_is_frozen():
+    item = ReviewItem(
+        kind="entity_merge",
+        payload={"candidate_id": "cand_1"},
+        reason="ambiguous match",
+        enqueued_at=NOW,
+    )
+    with pytest.raises(TypeError):
+        item.payload["candidate_id"] = "cand_2"  # type: ignore[index]
+
+
+def test_review_decision_edited_payload_is_frozen():
+    decision = ReviewDecision(
+        item_id="rv_1",
+        action=ReviewAction.EDIT,
+        actor="reviewer_1",
+        edited_payload={"display_name": "corrected"},
+        decided_at=NOW,
+    )
+    with pytest.raises(TypeError):
+        decision.edited_payload["display_name"] = "other"  # type: ignore[index]

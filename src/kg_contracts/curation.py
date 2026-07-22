@@ -105,12 +105,12 @@ class CurationOperation(BaseModel):
     reassigning the field, it does not stop `op.payload["x"] = 1`.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 
     operation_id: str = Field(default_factory=lambda: "op_" + new_ulid())
     type: CurationOperationType
     payload: FrozenDictObject
-    reversal_data: FrozenDictObject = Field(default_factory=dict, validate_default=True)
+    reversal_data: FrozenDictObject = Field(default_factory=dict)
 
 
 class Precondition(BaseModel):
