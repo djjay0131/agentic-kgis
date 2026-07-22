@@ -128,7 +128,7 @@ from collections.abc import Mapping
 from typing import Annotated, TypeVar
 
 from pydantic import PlainSerializer, TypeAdapter
-from pydantic.functional_validators import BeforeValidator
+from pydantic.functional_validators import PlainValidator
 
 VT = TypeVar("VT")
 
@@ -176,7 +176,10 @@ def frozen_dict(value_type: type[VT]) -> object:
 
     return Annotated[
         Mapping[str, value_type],  # type: ignore[valid-type]
-        BeforeValidator(_validate),
+        PlainValidator(_validate),  # NOT BeforeValidator: a before-validator's
+        # output is re-validated against the outer Mapping annotation, which
+        # rebuilds a plain mutable dict and defeats immutability. PlainValidator
+        # makes `_validate` the sole validation step (verified in review).
         PlainSerializer(lambda m: dict(m), return_type=dict),
     ]
 
