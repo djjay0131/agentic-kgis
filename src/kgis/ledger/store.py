@@ -11,6 +11,9 @@ from typing import Callable
 from kg_contracts.candidates import Candidate
 from kg_contracts.curation import ProcessingState
 from kg_contracts.stores import (
+    AdapterCapabilities,
+    LedgerEntry,
+    LedgerReadOptions,
     SubmissionOutcome,
     SubmissionResult,
     SubmissionStatus,
@@ -138,3 +141,40 @@ class SqliteCandidateLedger:
             raise
         self._conn.commit()
         return SubmissionResult(outcomes=tuple(outcomes))
+
+    def capabilities(self) -> AdapterCapabilities:
+        return AdapterCapabilities(supports_temporal_queries=True)
+
+    def row(self, candidate_id: str) -> LedgerRow | None:
+        r = self._conn.execute(
+            "SELECT * FROM ledger_entries WHERE candidate_id = ?", (candidate_id,)
+        ).fetchone()
+        return LedgerRow.from_sqlite(r) if r is not None else None
+
+    def ledger_entry(self, candidate_id: str) -> LedgerEntry | None:
+        row = self.row(candidate_id)
+        return row.to_entry() if row is not None else None
+
+    def ledger_entries(
+        self, options: LedgerReadOptions = LedgerReadOptions()
+    ) -> list[LedgerEntry]:
+        clauses = ["payload_json IS NOT NULL", "revoked_at IS NULL"]
+        params: list[object] = []
+        if options.graph_id is not None:
+            clauses.append("graph_id = ?")
+            params.append(options.graph_id)
+        if options.processing_states is not None:
+            marks = ",".join("?" for _ in options.processing_states)
+            clauses.append(f"processing_state IN ({marks})")
+            params.extend(s.value for s in options.processing_states)
+        sql = (
+            "SELECT * FROM ledger_entries WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY recorded_at, candidate_id"
+        )
+        entries: list[LedgerEntry] = []
+        for r in self._conn.execute(sql, params).fetchall():
+            entry = LedgerRow.from_sqlite(r).to_entry()
+            if entry is not None:
+                entries.append(entry)
+        return entries
