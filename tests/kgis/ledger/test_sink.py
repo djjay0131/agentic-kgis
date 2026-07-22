@@ -28,6 +28,25 @@ def test_duplicate_semantic_key_writes_no_second_row():
     assert count == 1
 
 
+def test_boundary_distinct_candidates_are_not_falsely_deduped():
+    """Regression test: (graph_id="ab", semantic_key="cd") and
+    (graph_id="abc", semantic_key="d") are distinct candidates, but without a
+    delimiter between graph_id and semantic_key their dedup_keys would both
+    concatenate to "abcd", causing the second to be falsely flagged
+    DUPLICATE and silently dropped. Both must be RECEIVED, and both rows
+    must exist in the ledger.
+    """
+    ledger = SqliteCandidateLedger(":memory:")
+    c1 = make_entity_candidate(graph_id="ab", key="k1", semantic_key="cd")
+    c2 = make_entity_candidate(graph_id="abc", key="k2", semantic_key="d")
+    r1 = ledger.submit([c1])
+    r2 = ledger.submit([c2])
+    assert r1.outcomes[0].status is SubmissionStatus.RECEIVED
+    assert r2.outcomes[0].status is SubmissionStatus.RECEIVED
+    count = ledger._conn.execute("SELECT COUNT(*) c FROM ledger_entries").fetchone()["c"]
+    assert count == 2
+
+
 class _SyncedConnection:
     """Wraps a real `sqlite3.Connection`, rendezvousing at a `barrier` right
     after the dedup-key SELECT fires (before the following INSERT).

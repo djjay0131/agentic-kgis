@@ -12,7 +12,7 @@ from kg_contracts.candidates import Candidate, candidate_adapter
 from kg_contracts.curation import ProcessingState
 from kg_contracts.stores import LedgerEntry
 
-_UNIT_SEP = ""
+_UNIT_SEP = "\x1f"
 
 
 def dedup_key(candidate: Candidate) -> str:

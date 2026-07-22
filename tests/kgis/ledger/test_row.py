@@ -10,7 +10,18 @@ NOW = datetime(2026, 7, 21, tzinfo=UTC)
 
 def test_dedup_key_uses_graph_and_semantic_key():
     c = make_entity_candidate(graph_id="baseball", key="team/42", semantic_key="team/42")
-    assert dedup_key(c) == "baseballteam/42"
+    assert dedup_key(c) == "baseball\x1fteam/42"
+
+
+def test_dedup_key_does_not_collide_across_graph_semantic_key_boundary():
+    """Without a delimiter between graph_id and semantic_key, distinct
+    (graph_id, semantic_key) pairs can concatenate to the same string
+    (e.g. "ab"+"cd" == "abc"+"d" == "abcd"). The ASCII Unit Separator
+    (0x1F) between them prevents this collision.
+    """
+    c1 = make_entity_candidate(graph_id="ab", key="k1", semantic_key="cd")
+    c2 = make_entity_candidate(graph_id="abc", key="k2", semantic_key="d")
+    assert dedup_key(c1) != dedup_key(c2)
 
 
 def test_for_candidate_projects_received_entry():
