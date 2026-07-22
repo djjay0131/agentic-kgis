@@ -159,14 +159,22 @@ class SqliteCandidateLedger:
         assert_transition(row.processing_state, to_state)
         new_retry = row.retry_count + (1 if increment_retry else 0)
         new_quarantine = quarantine_reason if quarantine_reason is not None else row.quarantine_reason
-        self._conn.execute(
-            "UPDATE ledger_entries SET processing_state = ?, retry_count = ?, "
-            "quarantine_reason = ? WHERE candidate_id = ?",
-            (to_state.value, new_retry, new_quarantine, candidate_id),
-        )
-        self._insert_transition(
-            candidate_id, row.processing_state, to_state, reason=reason, actor=actor
-        )
+        try:
+            self._conn.execute(
+                "UPDATE ledger_entries SET processing_state = ?, retry_count = ?, "
+                "quarantine_reason = ? WHERE candidate_id = ?",
+                (to_state.value, new_retry, new_quarantine, candidate_id),
+            )
+            self._insert_transition(
+                candidate_id, row.processing_state, to_state, reason=reason, actor=actor
+            )
+        except Exception:
+            # A mid-write failure (e.g. the transition insert) must not
+            # strand the just-applied UPDATE uncommitted on the shared
+            # connection for a later, unrelated call to commit. Roll back
+            # and propagate, mirroring submit()'s discipline.
+            self._conn.rollback()
+            raise
         self._conn.commit()
         updated = self.row(candidate_id)
         assert updated is not None  # just updated it
