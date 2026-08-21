@@ -93,9 +93,15 @@ class StructuredEvidenceRecorder:
     def record(self, records: Iterable[SourceRecord]) -> dict[_CoordKey, str]:
         """Store one PRESENT Evidence per record; return coord → evidence_id.
 
-        Deterministic `observed_at` (inject a `FixedClock`) keeps the stored
-        Evidence byte-identical across re-runs, so the registry write is a true
-        idempotent replay.
+        Idempotency at the id/ref/resolve level is unconditional: the
+        `evidence_id` is deterministic, `put()` is INSERT-OR-REPLACE, and
+        `add_refs` is INSERT-OR-IGNORE, so re-running never multiplies rows or
+        citations. *Byte-identical* stored Evidence across re-runs, however,
+        holds only when a fixed/deterministic clock is injected — `observed_at`
+        is sampled once per `record()` call, so under a real `SystemClock` a
+        re-run overwrites the same-id row with a fresh timestamp (still one row,
+        just a newer `observed_at`). Inject a `FixedClock` for a true byte-for-
+        byte replay.
         """
         observed_at: datetime = self._clock.now()
         for record in records:

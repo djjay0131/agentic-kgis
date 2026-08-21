@@ -73,6 +73,20 @@ class StructuredSyncConfig:
         Everything past the reader is the Sprint 1 spine: no structured-specific
         submission path exists, so `plan()`/`run()` honesty and the ledger's
         cross-run idempotency come for free from the shared pipeline.
+
+        Snapshot caveat: honesty is airtight within ONE pipeline instance —
+        `plan()` then `run()` on the *same* pipeline share one cached snapshot
+        (the reader opens it once), so they see byte-identical rows. Two
+        *separate* pipelines (one built for the dry run, one for the execution)
+        each open their own snapshot with no `plan.version == run.version`
+        interlock; if the source mutates between them they can diverge. For a
+        hard guarantee, reuse the same pipeline/reader instance for both
+        `plan()` and `run()`, or compare `config.reader().snapshot_version`
+        across the two. Even without that, a between-snapshots mutation is
+        mitigated: `candidate_id` is content-addressed (so the same fact still
+        dedups in the ledger) and the snapshot version is an observable token in
+        the coordinates locator, so a divergence is detectable rather than
+        silent.
         """
         return IngestPipeline(
             graph_id=self.graph_id,

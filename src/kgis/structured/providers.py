@@ -129,6 +129,10 @@ class DbapiRowProvider:
             else "*"
         )
         order = ", ".join(_quote_ident(k) for k in self._key_fields)
+        # `where` is a developer-supplied SQL predicate interpolated RAW (its
+        # bind parameters go through `self._params`, not string formatting). It
+        # is config, never a value derived from ingested data — it must NEVER
+        # carry untrusted input, or it is a SQL-injection vector.
         where = f" WHERE {self._where}" if self._where else ""
         return f"SELECT {cols} FROM {_quote_ident(self._table)}{where} ORDER BY {order}"
 
@@ -147,6 +151,11 @@ class DbapiRowProvider:
                 if not page:
                     break
                 for raw in page:
+                    # Positional zip of description columns → values. This
+                    # reference provider targets single-table SELECTs; a JOIN
+                    # projecting repeated column names would collapse to the
+                    # last occurrence (dict key reuse) and silently drop the
+                    # earlier one. Project distinct names (aliases) for joins.
                     rows.append({col: raw[i] for i, col in enumerate(columns)})
         finally:
             cursor.close()
