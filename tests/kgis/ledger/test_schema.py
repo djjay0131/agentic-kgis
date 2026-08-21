@@ -80,6 +80,10 @@ def test_v1_db_migrates_to_partial_index_and_allows_revoked_resubmit(tmp_path):
         "SELECT value FROM ledger_meta WHERE key='schema_version'"
     ).fetchone()[0] == str(SCHEMA_VERSION)
 
+    # The v1 tombstone row survived the migration intact (no data loss).
+    assert ledger.row(c1.candidate_id) is not None
+    assert ledger.is_revoked(c1.candidate_id)
+
     # The revoked key from the v1 DB is now resubmittable as a new live row.
     c2 = make_entity_candidate(key="mig/1")  # same semantic_key, new candidate_id
     assert ledger.submit([c2]).outcomes[0].status is SubmissionStatus.RECEIVED

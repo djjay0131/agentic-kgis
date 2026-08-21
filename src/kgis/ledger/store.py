@@ -283,6 +283,26 @@ class SqliteCandidateLedger:
     def capabilities(self) -> AdapterCapabilities:
         return AdapterCapabilities(supports_temporal_queries=True)
 
+    def has_candidate_id(self, candidate_id: str) -> bool:
+        """Does ANY ledger row carry this `candidate_id` (live, revoked, OR
+        erased tombstone)?
+
+        `candidate_id` is the `ledger_entries` PRIMARY KEY, so it is global:
+        an INSERT of a row with an existing `candidate_id` fails regardless of
+        the row's live/tombstone state. `plan()` uses this to predict the
+        candidate-id collision `run()` would hit when a content-addressed
+        (deterministic) resubmission reuses a tombstone's id — the live-only
+        `semantic_key` check cannot see a revoked/erased tombstone, but the PK
+        collision still rejects the insert (Issue #16). No live predicate here:
+        the PK is enforced across every row.
+        """
+        return (
+            self._conn.execute(
+                "SELECT 1 FROM ledger_entries WHERE candidate_id = ?", (candidate_id,)
+            ).fetchone()
+            is not None
+        )
+
     def row(self, candidate_id: str) -> LedgerRow | None:
         r = self._conn.execute(
             "SELECT * FROM ledger_entries WHERE candidate_id = ?", (candidate_id,)

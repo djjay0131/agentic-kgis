@@ -5,8 +5,6 @@ the seam PR #9 left open (sink owns cross-run idempotency, but a dry-run
 plan had no ledger to consult) is closed by Task 7/8's persistent ledger.
 """
 
-import pytest
-
 from kg_contracts.curation import ProcessingState
 from kgis.builders import EntityCandidateBuilder, SourceScoring
 from kgis.ids import IdStrategy, RandomIdStrategy
@@ -126,19 +124,12 @@ def test_plan_and_run_agree_after_erase(tmp_path):
     ledger.close()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Open owner decision (Issue #16): under the DEFAULT content-addressed "
-        "DeterministicIdStrategy, resubmitting the identical fact after revoke "
-        "mints the SAME candidate_id, so the new row collides with the tombstone "
-        "on the candidate_id PRIMARY KEY (not the dedup index) and run() reports "
-        "DUPLICATE while plan() predicts a submit. Closing this divergence needs "
-        "an owner call on whether a content-addressed fact is one identity forever "
-        "or a tombstone frees its candidate_id for a fresh live row."
-    ),
-)
-def test_deterministic_id_resubmit_after_revoke_still_diverges(tmp_path):
+def test_deterministic_id_resubmit_after_revoke_plan_and_run_agree(tmp_path):
+    """Under the DEFAULT content-addressed DeterministicIdStrategy, an
+    identical resubmit after revoke reuses the same candidate_id, so run()
+    rejects it as a DUPLICATE on the candidate_id PRIMARY KEY (not the dedup
+    index). plan() now predicts that PK collision via `has_candidate_id`, so
+    the two agree: both see 3 duplicates / 0 net-new (Issue #16)."""
     path = str(tmp_path / "ledger.db")
     ledger = SqliteCandidateLedger(path)
     assert _pipeline(ledger).run().received == 3  # default DeterministicIdStrategy
@@ -148,7 +139,62 @@ def test_deterministic_id_resubmit_after_revoke_still_diverges(tmp_path):
 
     dry = _pipeline(ledger).plan()
     assert dry.plan is not None
+    # Two live semantic_keys + one revoked tombstone whose candidate_id the
+    # deterministic resubmit reuses = all 3 predicted duplicate.
+    assert dry.plan.would_submit == 3
+    assert dry.plan.ledger_duplicates == 3
+
     report = _pipeline(ledger).run()
-    # The invariant we WANT (and that holds for distinct-id resubmission):
+    assert report.received == 0     # revoked key's resubmit hits the candidate_id PK
+    assert report.duplicates == 3
+    # plan() and run() agree, no divergence.
     assert dry.plan.would_submit - dry.plan.ledger_duplicates == report.received
+
+    assert ledger.is_revoked(victim)                     # tombstone retained
+    ledger.close()
+
+
+def _prop_pipeline(ledger: SqliteCandidateLedger, records) -> IngestPipeline:
+    """Pipeline whose builder carries a `v` property, so changing `v` changes
+    a candidate's content_hash while its semantic_key (from `id`) and its
+    deterministic candidate_id stay fixed."""
+    return IngestPipeline(
+        graph_id="baseball",
+        reader=IterableRecordReader(records, source_type="roster", locator="memory://roster"),
+        normalizer=PassthroughNormalizer(),
+        builder=EntityCandidateBuilder(
+            namespace="usssa", key_field="id", entity_type="Player", property_fields=("v",)
+        ),
+        sink=ledger,
+        scoring=SourceScoring(source_reliability=0.9),
+        ledger_reader=ledger,
+    )
+
+
+def test_deterministic_id_changed_content_same_semantic_key_still_duplicate(tmp_path):
+    """Deterministic candidate_id = f(graph_id, kind, semantic_key) — it does
+    NOT depend on content. So re-ingesting the same semantic_key with CHANGED
+    content still mints the same candidate_id and is a DUPLICATE no-op; plan()
+    and run() agree. (Enforcing "a resubmit must change content + carry a
+    reason" is the separate, deferred owner decision on Issue #16.)"""
+    path = str(tmp_path / "ledger.db")
+    ledger = SqliteCandidateLedger(path)
+    assert _prop_pipeline(ledger, [{"id": "p1", "v": "a"}]).run().received == 1
+    original = ledger.ledger_entries()[0].candidate
+
+    # Same id (=> same semantic_key => same deterministic candidate_id), new content.
+    dry = _prop_pipeline(ledger, [{"id": "p1", "v": "b"}]).plan()
+    assert dry.plan is not None
+    assert dry.plan.would_submit == 1
+    assert dry.plan.ledger_duplicates == 1   # predicted duplicate
+
+    report = _prop_pipeline(ledger, [{"id": "p1", "v": "b"}]).run()
+    assert report.received == 0              # actually deduped
+    assert report.duplicates == 1
+    assert dry.plan.would_submit - dry.plan.ledger_duplicates == report.received
+
+    # The live row is unchanged: content-addressed identity is a no-op replay.
+    current = ledger.ledger_entries()[0].candidate
+    assert current.candidate_id == original.candidate_id
+    assert current.content_hash == original.content_hash
     ledger.close()
