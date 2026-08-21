@@ -83,20 +83,40 @@ for this ADR.
 
 A revoked or erased row is a retained *tombstone*, not a live row. Its
 `dedup_key` (`graph_id` + `semantic_key`) is released: a new live candidate
-with the same `semantic_key` may be resubmitted and is admitted as a new live
-row, coexisting with the tombstone. Mechanically, `ix_ledger_dedup` is a
-**partial** unique index over live rows only (`WHERE revoked_at IS NULL AND
-erased_at IS NULL`), and the sink's duplicate check plus the default
-`ledger_entries()` listing use that *same* live-row predicate. This keeps the
-dry-run plan (`kgis plan`, which counts live ledger entries) in exact
-agreement with execution: a revoked/erased key that `plan()` reports as
-"would submit" is actually admitted by `run()` (Issue #16).
+with the same `semantic_key` **but a distinct `candidate_id`** may be
+resubmitted and is admitted as a new live row, coexisting with the tombstone.
+Mechanically, `ix_ledger_dedup` is a **partial** unique index over live rows
+only (`WHERE revoked_at IS NULL AND erased_at IS NULL`), and the sink's
+duplicate check plus the default `ledger_entries()` listing use that *same*
+live-row predicate. Dry-run and execution therefore stay in exact agreement.
 
-Note: this ADR only establishes that a revoked/erased key *is resubmittable*.
-Whether a resubmission must additionally (a) change content — reject a
-byte-identical resubmit by comparing `content_hash` — and (b) carry an
-explicit resubmission `reason` recorded as a transition, is an **open owner
-decision** tracked in Issue #16 and deliberately not implemented here.
+The `candidate_id` caveat matters because `candidate_id` is the
+`ledger_entries` PRIMARY KEY, enforced across *every* row (live or tombstone),
+independently of the partial dedup index. So a resubmission is only admitted
+as a new live row when it carries a **distinct identity**:
+
+- Under a **non-deterministic** id strategy (e.g. `RandomIdStrategy`), a
+  resubmit mints a fresh `candidate_id`, does not collide with the tombstone,
+  and is admitted.
+- Under the **default content-addressed `DeterministicIdStrategy`**,
+  `candidate_id = f(graph_id, candidate_kind, semantic_key)` — it does *not*
+  depend on content. Re-ingesting the same `semantic_key` (even with changed
+  content) mints the *same* `candidate_id`, which collides with the
+  tombstone's PRIMARY KEY, so the resubmit is a **no-op DUPLICATE**. This is
+  the correct content-addressed identity semantics: the same fact is one
+  identity, whether or not it is currently revoked.
+
+`plan()` predicts both outcomes exactly (it probes the ledger for the
+`candidate_id` `run()` would insert as well as the live `semantic_key`), so
+dry-run and execution agree under either id strategy (Issue #16).
+
+Note: this ADR only establishes that a revoked/erased key *is resubmittable
+under a distinct identity*. Whether a resubmission must additionally (a) change
+content — reject a byte-identical resubmit by comparing `content_hash` — and
+(b) carry an explicit resubmission `reason` recorded as a transition (which
+would also require a way to mint a fresh identity for the same fact under the
+deterministic strategy), is an **open owner decision** tracked in Issue #16
+and deliberately not implemented here.
 
 ## Rationale
 
