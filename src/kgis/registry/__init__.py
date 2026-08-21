@@ -28,7 +28,12 @@ from kgis.registry.models import (
     RegisteredGraph,
     ScoredGraph,
 )
-from kgis.registry.store import DecisionRecord, SqliteRegistryStore, open_registry_db
+from kgis.registry.store import (
+    DecisionConflictError,
+    DecisionRecord,
+    SqliteRegistryStore,
+    open_registry_db,
+)
 
 __all__ = [
     "AUTOMATED_FACTORS",
@@ -37,6 +42,7 @@ __all__ = [
     "AdvisorConfig",
     "AdvisorRecommendation",
     "ChecklistItem",
+    "DecisionConflictError",
     "DecisionRecord",
     "Factor",
     "GraphAdvisor",

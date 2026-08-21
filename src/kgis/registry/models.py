@@ -31,7 +31,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from kg_contracts.registry import GraphDescriptor
+from kg_contracts.registry import SCORED_FACTORS_V1, GraphDescriptor
 from kg_contracts.registry import Recommendation as ContractRecommendation
 
 # --- Reserved extension-attribute keys ---------------------------------------
@@ -180,11 +180,13 @@ FACTORS: tuple[Factor, ...] = (
 AUTOMATED_FACTORS: tuple[Factor, ...] = tuple(f for f in FACTORS if f.automated)
 HUMAN_FACTORS: tuple[Factor, ...] = tuple(f for f in FACTORS if not f.automated)
 
-# Sanity: the automated subset's contract keys must be exactly the frozen
+# Invariant: the automated subset's contract keys must be exactly the frozen
 # SCORED_FACTORS_V1 set, or scores will not round-trip into the contract.
-_AUTOMATED_CONTRACT_KEYS: frozenset[str] = frozenset(
-    f.contract_key for f in AUTOMATED_FACTORS if f.contract_key is not None
-)
+# Asserted at import so a mismatch fails loudly at load, not just under test.
+assert (
+    frozenset(f.contract_key for f in AUTOMATED_FACTORS if f.contract_key is not None)
+    == SCORED_FACTORS_V1
+), "automated factor contract keys must equal kg_contracts SCORED_FACTORS_V1"
 
 
 # --- Four outcome architectures + the honest null ----------------------------

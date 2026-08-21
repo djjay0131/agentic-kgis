@@ -37,8 +37,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from kg_contracts.registry import GraphDescriptor
+from kg_contracts.registry import GraphDescriptor, RegistryStore
 from kgis.clock import Clock, SystemClock
+from kgis.errors import KgisError
 from kgis.ids import stable_suffix
 from kgis.registry.models import (
     ATTR_BACKEND_OPEN_ID,
@@ -48,6 +49,17 @@ from kgis.registry.models import (
 )
 
 _SCHEMA_VERSION = 1
+
+
+class DecisionConflictError(KgisError):
+    """A different decision is already recorded under the same `decision_id`.
+
+    `record_decision` is idempotent for an *identical* re-submission (a
+    double-submit, or any caller on a `FixedClock` deriving the same
+    deterministic id), but a same-id/different-content collision is a real
+    ambiguity — surfaced as this domain error rather than a bare
+    `sqlite3.IntegrityError`.
+    """
 
 
 class DecisionRecord(BaseModel):
@@ -291,21 +303,35 @@ class SqliteRegistryStore:
             rationale=rationale,
             decided_at=decided_at,
         )
+        new_row = (
+            record.decision_id,
+            record.graph_name,
+            recommendation.model_dump_json(),
+            str(chosen_outcome),
+            decided_by,
+            rationale,
+            decided_at.isoformat(),
+        )
         with self._transaction() as cursor:
+            # Idempotent by decision_id: a re-submit of the *same* row is a
+            # no-op; the read-back below then decides no-op vs. conflict.
             cursor.execute(
                 "INSERT INTO decisions "
                 "(decision_id, graph_name, recommendation_json, chosen_outcome, "
                 " decided_by, rationale, decided_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    record.decision_id,
-                    record.graph_name,
-                    recommendation.model_dump_json(),
-                    str(chosen_outcome),
-                    decided_by,
-                    rationale,
-                    decided_at.isoformat(),
-                ),
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(decision_id) DO NOTHING",
+                new_row,
+            )
+            stored = cursor.execute(
+                "SELECT decision_id, graph_name, recommendation_json, chosen_outcome, "
+                "decided_by, rationale, decided_at FROM decisions WHERE decision_id = ?",
+                (record.decision_id,),
+            ).fetchone()
+        if tuple(stored) != new_row:
+            raise DecisionConflictError(
+                f"a different decision is already recorded under decision_id "
+                f"{record.decision_id!r}"
             )
         return record
 
@@ -351,6 +377,15 @@ def open_registry_db(path: str | Path, *, clock: Clock | None = None) -> SqliteR
     return SqliteRegistryStore(connection, clock=clock)
 
 
+def _assert_registry_store_conformance(store: SqliteRegistryStore) -> RegistryStore:
+    """Static-only guard: `mypy --strict` fails here if `SqliteRegistryStore`
+    ever drifts out of structural conformance with the frozen `RegistryStore`
+    protocol (a changed `register`/`get`/`all` signature or return type). The
+    runtime `isinstance` check only inspects method *names*; this checks types.
+    Never called."""
+    return store
+
+
 # --- serialization helpers ---------------------------------------------------
 
 
@@ -382,4 +417,9 @@ def _row_to_decision(row: sqlite3.Row) -> DecisionRecord:
     )
 
 
-__all__ = ["DecisionRecord", "SqliteRegistryStore", "open_registry_db"]
+__all__ = [
+    "DecisionConflictError",
+    "DecisionRecord",
+    "SqliteRegistryStore",
+    "open_registry_db",
+]

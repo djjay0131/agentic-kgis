@@ -12,6 +12,7 @@ from kg_contracts.registry import Backend, GraphDescriptor, RegistryStore
 from kgis.clock import FixedClock
 from kgis.registry import (
     AdvisorRecommendation,
+    DecisionConflictError,
     Outcome,
     open_registry_db,
 )
@@ -132,6 +133,42 @@ def test_human_can_override_the_recommendation() -> None:
     assert read.recommendation.outcome is Outcome.EXTEND_SAME_PHYSICAL
     assert read.chosen_outcome is Outcome.SEPARATE_SHARED_IDENTITY
     assert read.graph_name == "new-baseball-kg"
+
+
+def test_record_decision_is_idempotent_on_identical_resubmit() -> None:
+    # A double-submit (or any FixedClock caller) derives the same
+    # deterministic decision_id; an identical resubmit must be a no-op.
+    store = open_registry_db(":memory:", clock=_FIXED)
+    kwargs = {
+        "chosen_outcome": Outcome.EXTEND_SAME_PHYSICAL,
+        "decided_by": "djjay",
+        "rationale": "ontology and identity both align",
+    }
+    first = store.record_decision(_recommendation(), **kwargs)  # type: ignore[arg-type]
+    second = store.record_decision(_recommendation(), **kwargs)  # type: ignore[arg-type]
+    assert first.decision_id == second.decision_id
+    assert len(store.decisions()) == 1
+
+
+def test_record_decision_conflict_raises_domain_error() -> None:
+    # Same decision_id, different content -> a clear domain error, not a bare
+    # sqlite3.IntegrityError.
+    store = open_registry_db(":memory:", clock=_FIXED)
+    store.record_decision(
+        _recommendation(),
+        chosen_outcome=Outcome.EXTEND_SAME_PHYSICAL,
+        decided_by="djjay",
+        rationale="first rationale",
+        decision_id="dec_fixed",
+    )
+    with pytest.raises(DecisionConflictError, match="dec_fixed"):
+        store.record_decision(
+            _recommendation(),
+            chosen_outcome=Outcome.EXTEND_SAME_PHYSICAL,
+            decided_by="djjay",
+            rationale="different rationale",
+            decision_id="dec_fixed",
+        )
 
 
 def test_record_outcome_appends_to_corpus() -> None:
