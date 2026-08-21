@@ -14,10 +14,12 @@ rights the ledger did not yet support:
   correction, a bad ingest) and it should stop appearing in normal ledger
   listings, without destroying the audit trail or the ability to look the
   record up directly.
-- **Irrecoverable deletion ("erase"):** a data subject exercises a legal
-  erasure right (e.g. GDPR) and the underlying payload must become
-  unrecoverable, while the ledger still proves *that* a record existed and
-  was erased, and by whom/why/when.
+- **Logical erasure ("erase"):** an operator withdraws a candidate's payload
+  from the live row so it can no longer be read back through the ledger,
+  while the ledger still proves *that* a record existed and was erased, and
+  by whom/why/when. This is a *logical* erasure of the live payload plus a
+  retained hash tombstone — **not** a forensic / at-rest scrub (see the
+  scope note under Decision).
 
 These are governance actions on a *row*, not points in the candidate's
 processing lifecycle (`RECEIVED` → ... → terminal states in
@@ -42,13 +44,33 @@ already reserved in the Task-4 schema (`revoked_at`, `revocation_reason`,
   if the row does not exist or is already erased (nothing left to revoke).
 - **`erase(candidate_id, reason, actor)`** — gated by
   `ConsumerProfile.erasure_enabled` (ADR-0014); raises `PermissionError`
-  otherwise — NULLs `payload_json` irrecoverably, sets `erased_at` /
-  `erasure_reason`, and keeps the pre-existing `payload_hash` as a hash-only
-  tombstone. After erase, `ledger_entry(candidate_id)` returns `None` and
-  `ledger_entries()` excludes the row (`payload_json IS NOT NULL`, wired in
-  Task 8) because the full `Candidate` can no longer be reconstructed from a
+  otherwise — NULLs `payload_json` in the live row (`UPDATE ... SET
+  payload_json = NULL`), sets `erased_at` / `erasure_reason`, and keeps the
+  pre-existing `payload_hash` as a hash-only tombstone. After erase,
+  `ledger_entry(candidate_id)` returns `None` and `ledger_entries()` excludes
+  the row because the full `Candidate` can no longer be reconstructed from a
   null payload. `LedgerRow.is_erased` proves existence-plus-erasure without
   exposing content.
+
+### Scope of erasure — logical, not at-rest
+
+`erase()` is **logical erasure**: it nulls the live payload column and
+retains a hash tombstone. It is deliberately **not** a forensic / at-rest
+scrub. Under `journal_mode = WAL` with `secure_delete` OFF (the ledger's
+configuration), the original JSON bytes may still persist in freelist pages
+and in the `-wal` file until they are overwritten or checkpointed; no
+`secure_delete`, `VACUUM`, or `wal_checkpoint` is performed. The guarantee
+`erase()` delivers is therefore: *the payload is no longer readable through
+the ledger API, and an auditable hash-only tombstone remains.* It is **not**:
+*the payload bytes are destroyed on disk.*
+
+Consequently, a hard "right to erasure" / at-rest-destruction obligation
+(e.g. a regulator requiring the bytes be unrecoverable from the media) is
+**not** satisfied by this primitive. An adopter (e.g. baseball-ai, Issue #2)
+must not treat logical erasure as regulatory compliance; true at-rest
+destruction would need an additional mechanism (e.g. `secure_delete` +
+checkpoint/VACUUM, or encryption-with-key-destruction) and is out of scope
+for this ADR.
 - Both operations append a `ledger_transitions` row (`from_state ==
   to_state`, `reason="revoked: ..."` / `"erased: ..."`, `actor`) so the
   governance action is itself part of the append-only audit trail, and both
@@ -56,6 +78,25 @@ already reserved in the Task-4 schema (`revoked_at`, `revocation_reason`,
   (Task 7) and `transition()` (Task 9): wrap the write in `try`/`except`,
   roll back and re-raise on any failure, commit only on success.
 - No new `ProcessingState` member is added.
+
+### Revoke/erase release the dedup key for resubmission
+
+A revoked or erased row is a retained *tombstone*, not a live row. Its
+`dedup_key` (`graph_id` + `semantic_key`) is released: a new live candidate
+with the same `semantic_key` may be resubmitted and is admitted as a new live
+row, coexisting with the tombstone. Mechanically, `ix_ledger_dedup` is a
+**partial** unique index over live rows only (`WHERE revoked_at IS NULL AND
+erased_at IS NULL`), and the sink's duplicate check plus the default
+`ledger_entries()` listing use that *same* live-row predicate. This keeps the
+dry-run plan (`kgis plan`, which counts live ledger entries) in exact
+agreement with execution: a revoked/erased key that `plan()` reports as
+"would submit" is actually admitted by `run()` (Issue #16).
+
+Note: this ADR only establishes that a revoked/erased key *is resubmittable*.
+Whether a resubmission must additionally (a) change content — reject a
+byte-identical resubmit by comparing `content_hash` — and (b) carry an
+explicit resubmission `reason` recorded as a transition, is an **open owner
+decision** tracked in Issue #16 and deliberately not implemented here.
 
 ## Rationale
 
@@ -71,13 +112,15 @@ already reserved in the Task-4 schema (`revoked_at`, `revocation_reason`,
   (`payload_hash` survives; `payload_json` does not) combined with the
   `ledger_transitions` audit row lets an operator prove *that* erasure
   happened and *when*, without being able to reconstruct the erased content
-  — satisfying both "right to erasure" and "must remain auditable."
-- **Revoke is reversible in principle; erase is not.** Revoke only flips a
-  visibility flag and retains the payload, so it could be un-set by a future
-  operation if the data controller decides the retraction was wrong. Erase
-  destroys the payload at the row level — reinstating it would require
+  through the ledger — satisfying "the payload is no longer readable via the
+  ledger" and "must remain auditable" (but not at-rest destruction; see the
+  scope note above).
+- **Revoke is reversible in principle; erase is not (logically).** Revoke
+  only flips a visibility flag and retains the payload, so it could be un-set
+  by a future operation if the data controller decides the retraction was
+  wrong. Erase nulls the live payload column — reinstating it would require
   resubmitting the original candidate from source, which is the correct
-  incentive shape for an irrecoverable-deletion primitive.
+  incentive shape for a logical-erasure primitive.
 
 ## Alternatives Considered
 
