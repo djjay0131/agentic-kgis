@@ -24,7 +24,7 @@ from kgis.ledger.audit import SqliteAuditStream
 from kgis.ledger.config import ConsumerProfile, IdentityMode, IdentityResolver
 from kgis.ledger.lifecycle import assert_transition
 from kgis.ledger.row import LedgerRow, _iso, dedup_key
-from kgis.ledger.schema import open_ledger_db
+from kgis.ledger.schema import LIVE_ROW_PREDICATE, open_ledger_db
 
 _INSERT_ENTRY = """
 INSERT INTO ledger_entries (
@@ -114,8 +114,16 @@ class SqliteCandidateLedger:
         try:
             for candidate in candidates:
                 key = dedup_key(candidate)
+                # Dedup only against a *live* row (Issue #16): a revoked/erased
+                # tombstone releases its `dedup_key` for resubmission. This is
+                # the SAME LIVE_ROW_PREDICATE that `ledger_entries()` (which
+                # `plan()` counts against) and the partial unique index use, so
+                # dry-run and execution can never diverge for a revoked/erased
+                # key. Prefix kept as "SELECT 1 FROM ledger_entries WHERE
+                # dedup_key" for the concurrency barrier test in test_sink.py.
                 seen = self._conn.execute(
-                    "SELECT 1 FROM ledger_entries WHERE dedup_key = ?", (key,)
+                    f"SELECT 1 FROM ledger_entries WHERE dedup_key = ? AND {LIVE_ROW_PREDICATE}",
+                    (key,),
                 ).fetchone()
                 if seen is not None:
                     outcomes.append(self._duplicate_outcome(candidate))
@@ -153,10 +161,14 @@ class SqliteCandidateLedger:
                     # inherently racy across connections). ledger_entries has
                     # exactly two UNIQUE constraints an insert of an
                     # already-validated `Candidate` can violate: the
-                    # `candidate_id` PRIMARY KEY and the `dedup_key` UNIQUE
-                    # index (schema.py `ix_ledger_dedup`). Both mean "this
-                    # candidate (or its semantic key) was already admitted" —
-                    # i.e. a replay — so treating the violation as DUPLICATE
+                    # `candidate_id` PRIMARY KEY and the `dedup_key` PARTIAL
+                    # unique index (schema.py `ix_ledger_dedup`, over live rows
+                    # only). The partial index can only fire when a *live* row
+                    # with this key already exists — exactly the concurrent
+                    # replay this handler exists for; a revoked/erased tombstone
+                    # of the same key does not conflict. Both mean "this
+                    # candidate (or its live semantic key) was already admitted"
+                    # — i.e. a replay — so treating the violation as DUPLICATE
                     # is correct rather than masking a genuine integrity bug.
                     # No other unique/PK constraint on this table can fire
                     # for a non-duplicate insert.
@@ -284,7 +296,11 @@ class SqliteCandidateLedger:
     def ledger_entries(
         self, options: LedgerReadOptions = LedgerReadOptions()
     ) -> list[LedgerEntry]:
-        clauses = ["payload_json IS NOT NULL", "revoked_at IS NULL"]
+        # Same LIVE_ROW_PREDICATE the sink dedups against and the partial unique
+        # index enforces (Issue #16), so plan() (which counts these entries) and
+        # run() agree exactly. `erased_at IS NULL` also implies the payload is
+        # present, so an erased tombstone (payload NULL) is excluded here too.
+        clauses = [LIVE_ROW_PREDICATE]
         params: list[object] = []
         if options.graph_id is not None:
             clauses.append("graph_id = ?")
