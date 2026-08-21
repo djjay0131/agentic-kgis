@@ -443,6 +443,21 @@ class CompositeCandidateBuilder:
     is not decoration here: the pipeline's intra-run duplicate suppression
     keeps the *first* candidate for a semantic key, so a wobbly order would
     silently change which one survives.
+
+    All-or-nothing row semantics (adopter warning, issue #11):
+    `required_fields` unions *every* sub-builder's required fields, and the
+    pipeline rejects a record at the record tier if any of those fields is
+    missing — before any builder runs. So a record missing one sub-builder's
+    required field drops the WHOLE row: every candidate from every co-builder,
+    not just the one that needed the field. Concrete example (baseball-ai): a
+    composite of a player-entity builder and a plays-for-relation builder over
+    a row with a null `team` drops the player *entity* too, not merely the
+    relation — the union pulls `team` into the row's required set. This is
+    intentional ('no partial candidates from a failed row', PR #9 round-2;
+    pinned by test_pipeline.py::test_a_missing_relation_endpoint_rejects_the_
+    record_not_the_run). See docs/kgis-adopter-notes.md. If a sub-builder's
+    field should be optional to the row, do not add it to that builder's
+    `required_fields`; guard it inside `build()` instead.
     """
 
     def __init__(self, builders: Sequence[CandidateBuilder]) -> None:

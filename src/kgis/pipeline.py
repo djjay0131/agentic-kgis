@@ -247,7 +247,15 @@ class IngestPipeline:
                     # built from this row is admitted, partially or otherwise.
                     # Anything else a builder raises is a bug, not data, and
                     # propagates — a programmer error must never be quarantined
-                    # as a bad record.
+                    # as a bad record. Disclosed residual crack (issue #10):
+                    # this boundary is not airtight programmer-vs-data
+                    # separation. A builder *bug* that constructs a contract
+                    # model with wrong-typed data raises PydanticValidationError
+                    # and is caught here — quarantined as BAD_DATA rather than
+                    # propagating. Defensible (a model refusing a value usually
+                    # *is* bad data) and accepted, but a future maintainer must
+                    # not mistake this for a guarantee that every builder bug
+                    # propagates.
                     report.note_validation_failure(self._build_failure(normalized, exc))
                     continue
                 report.records_valid += 1
