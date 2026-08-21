@@ -26,7 +26,25 @@ import json
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+GoldKey = tuple[str, ...]
+
+
+def norm_value(value: object) -> str:
+    """Stable string normalization of an attribute value.
+
+    JSON with sorted keys for containers, the raw string for strings, so that
+    `200` and `"200"` collapse to the same key and dict ordering never matters.
+    Lives here (not in `matching`) so both a `GoldAttribute` match key and a
+    candidate match key derive value identity through the exact same function.
+    """
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    except TypeError:
+        return str(value)
 
 
 class EvidenceSpan(BaseModel):
@@ -61,6 +79,10 @@ class GoldEntity(BaseModel):
     display_name: str | None = None
     evidence: EvidenceSpan | None = None
 
+    def match_key(self) -> GoldKey:
+        """The grading key, identical to the candidate-side entity key."""
+        return ("entity", self.entity_type, self.semantic_key)
+
 
 class GoldRelation(BaseModel):
     """One relation a perfect run must produce.
@@ -77,6 +99,10 @@ class GoldRelation(BaseModel):
     object: str = Field(min_length=1)
     evidence: EvidenceSpan | None = None
 
+    def match_key(self) -> GoldKey:
+        """The grading key, identical to the candidate-side relation key."""
+        return ("relation", self.relation_type, self.subject, self.object)
+
 
 class GoldAttribute(BaseModel):
     """One attribute assertion a perfect run must produce.
@@ -91,6 +117,10 @@ class GoldAttribute(BaseModel):
     attribute: str = Field(min_length=1)
     value: Any
     evidence: EvidenceSpan | None = None
+
+    def match_key(self) -> GoldKey:
+        """The grading key, identical to the candidate-side attribute key."""
+        return ("attribute", self.subject, self.attribute, norm_value(self.value))
 
 
 class GoldSet(BaseModel):
@@ -111,6 +141,33 @@ class GoldSet(BaseModel):
     entities: tuple[GoldEntity, ...] = ()
     relations: tuple[GoldRelation, ...] = ()
     attributes: tuple[GoldAttribute, ...] = ()
+
+    @model_validator(mode="after")
+    def _check_unique_keys(self) -> GoldSet:
+        """Reject a gold set containing two items with the same match key.
+
+        Grading matches on a match key, and only the first item with a given
+        key can ever be matched (see `matching._match`); a second item with an
+        identical key is a permanent false negative that silently caps recall.
+        A gold set with duplicate keys is almost certainly an authoring error,
+        so it is rejected loudly at construction/load time rather than quietly
+        distorting every metric computed against it.
+        """
+        for label, items in (
+            ("entity", self.entities),
+            ("relation", self.relations),
+            ("attribute", self.attributes),
+        ):
+            seen: set[GoldKey] = set()
+            for item in items:
+                key = item.match_key()
+                if key in seen:
+                    raise ValueError(
+                        f"duplicate {label} gold key {key!r}: two gold items share a "
+                        "match key, which would make the second permanently unmatchable"
+                    )
+                seen.add(key)
+        return self
 
     @property
     def content_hash(self) -> str:

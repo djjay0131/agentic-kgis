@@ -42,6 +42,24 @@ def test_json_is_deterministic_and_valid() -> None:
     assert len(parsed["arms"]) == 2
 
 
+def test_json_keys_are_sorted_for_diffability() -> None:
+    text = render_json(build_result())
+    parsed = json.loads(text)
+    # every object in the tree must serialize with sorted keys
+    def _keys_sorted(obj: object) -> bool:
+        if isinstance(obj, dict):
+            keys = list(obj.keys())
+            return keys == sorted(keys) and all(_keys_sorted(v) for v in obj.values())
+        if isinstance(obj, list):
+            return all(_keys_sorted(v) for v in obj)
+        return True
+
+    assert _keys_sorted(parsed)
+    # top-level ordering is visible directly
+    top = [line.strip().split(":")[0] for line in text.splitlines() if line.startswith("  \"")]
+    assert top == sorted(top)
+
+
 def test_markdown_is_deterministic() -> None:
     a = render_markdown(build_result())
     b = render_markdown(build_result())

@@ -2,7 +2,10 @@
 
 from pathlib import Path
 
-from kg_eval import GoldSet
+import pytest
+from pydantic import ValidationError
+
+from kg_eval import GoldEntity, GoldRelation, GoldSet
 
 FIXTURE = Path(__file__).parent / "fixtures" / "baseball_gold.json"
 
@@ -41,3 +44,31 @@ def test_content_hash_is_stable_and_content_only() -> None:
     # changing an actual label MUST change the hash
     mutated = gold.model_copy(update={"attributes": gold.attributes[:-1]})
     assert mutated.content_hash != gold.content_hash
+
+
+class TestDuplicateKeysRejected:
+    def test_duplicate_entity_key_raises(self) -> None:
+        dup = GoldEntity(entity_type="Player", semantic_key="player/p1")
+        with pytest.raises(ValidationError, match="duplicate entity gold key"):
+            GoldSet(gold_set_id="g", entities=(dup, dup))
+
+    def test_duplicate_relation_key_raises(self) -> None:
+        rel = GoldRelation(
+            relation_type="PLAYS_FOR", subject="Player:usssa:p1", object="Team:usssa:t1"
+        )
+        with pytest.raises(ValidationError, match="duplicate relation gold key"):
+            GoldSet(gold_set_id="g", relations=(rel, rel))
+
+    def test_distinct_keys_are_accepted(self) -> None:
+        gs = GoldSet(
+            gold_set_id="g",
+            entities=(
+                GoldEntity(entity_type="Player", semantic_key="player/p1"),
+                GoldEntity(entity_type="Player", semantic_key="player/p2"),
+            ),
+        )
+        assert len(gs.entities) == 2
+
+    def test_loaded_fixture_has_unique_keys(self) -> None:
+        # a smoke check that the shipped fixture itself is well-formed
+        assert GoldSet.from_json_file(FIXTURE) is not None

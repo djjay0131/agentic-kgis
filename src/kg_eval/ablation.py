@@ -95,6 +95,15 @@ def _guardrail_concerns(baseline: ExtractionMetrics, enhanced: ExtractionMetrics
 
     An improvement bought by more hallucinations, more unsupported assertions,
     or (when both measured) more cost/latency is not a default-worthy win.
+
+    Known limitation: the cost and latency guardrails only fire when *both*
+    arms report the value. An enhanced arm that stops measuring cost/latency
+    (`cost=None`, or a `CostLatency` field left `None`) therefore escapes the
+    cost/latency check entirely — the comparison is skipped rather than treated
+    as a regression. Hallucination and unsupported-assertion guardrails have no
+    such gap; they are always measurable from the candidates. A future revision
+    could treat "stopped measuring a previously-measured cost" as a concern in
+    its own right; today it does not.
     """
     concerns: list[str] = []
     if enhanced.hallucination_count > baseline.hallucination_count:

@@ -14,6 +14,8 @@ next to the point estimate rather than having to trust a bare number.
 
 from __future__ import annotations
 
+import json
+
 from pydantic import BaseModel, ConfigDict
 
 from kg_eval.ablation import AblationResult
@@ -84,8 +86,14 @@ def evaluate_arms(
 
 
 def render_json(result: EvaluationResult) -> str:
-    """Deterministic pretty JSON of the whole result."""
-    return result.model_dump_json(indent=2)
+    """Deterministic pretty JSON of the whole result, with sorted keys.
+
+    `sort_keys=True` makes an archived report robustly diffable: two runs that
+    produce equal results produce byte-identical JSON regardless of model field
+    ordering, matching the stability guarantee `GoldSet.content_hash` already
+    relies on.
+    """
+    return json.dumps(result.model_dump(mode="json"), indent=2, sort_keys=True)
 
 
 def _fmt_metric(metric: MetricValue) -> str:

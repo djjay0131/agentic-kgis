@@ -355,6 +355,15 @@ def evaluate_extraction(
     rel_match = match_relations(output.candidates, gold)
     attr_match = match_attributes(output.candidates, gold)
 
+    # Hallucinations are the false positives across all categories. Note the
+    # deliberate semantic (see `matching._match`): a *duplicate correct*
+    # candidate — a second emission of a fact already matched — counts as a
+    # false positive and therefore as a hallucination here, because
+    # `fp = len(candidates) - tp` and only the first emission consumes the gold
+    # item. This is intentional: an arm that pads output with repeats is
+    # over-producing, and precision/hallucination should reflect that. It is
+    # NOT a claim that the repeated fact is fabricated — redundant emission and
+    # a fabricated fact are both penalized here, but they are different faults.
     hallucination = ent_match.fp + rel_match.fp + attr_match.fp
 
     attempted = output.attempted if output.attempted is not None else gold.attempted

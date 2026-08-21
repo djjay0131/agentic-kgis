@@ -7,9 +7,13 @@ than a plausible-looking wrong number.
 
 from pathlib import Path
 
+import pytest
 from helpers import hallucinating_arm, lossy_arm, perfect_arm
+from pydantic import ValidationError
 
 from kg_eval import (
+    ArmConfig,
+    ArmOutput,
     BootstrapConfig,
     GoldSet,
     MetricValue,
@@ -127,3 +131,21 @@ class TestBootstrapAttached:
     def test_metric_value_factories(self) -> None:
         assert MetricValue.measured(0.5).value == 0.5
         assert MetricValue.insufficient("why").value is None
+
+
+class TestArmOutputBounds:
+    def test_abstained_plus_failed_over_attempted_raises(self) -> None:
+        # 7 + 4 > 10 -> a rate could exceed 1.0, so construction is rejected
+        with pytest.raises(ValidationError, match="exceeds attempted"):
+            ArmOutput(arm=ArmConfig(arm_id="x"), attempted=10, abstained=7, failed=4)
+
+    def test_at_the_boundary_is_allowed(self) -> None:
+        out = ArmOutput(arm=ArmConfig(arm_id="x"), attempted=10, abstained=6, failed=4)
+        assert out.abstained + out.failed == out.attempted
+
+    def test_no_attempted_count_skips_the_bound(self) -> None:
+        # honest-null path: no denominator, so counts pass through unbounded
+        out = ArmOutput(arm=ArmConfig(arm_id="x"), attempted=None, abstained=9, failed=9)
+        assert out.attempted is None
+        m = evaluate_extraction(out, gold().model_copy(update={"attempted": None}))
+        assert m.abstention_rate.value is None

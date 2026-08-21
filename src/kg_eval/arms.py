@@ -23,7 +23,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kg_contracts.candidates import Candidate
 from kg_contracts.evidence import Evidence
@@ -89,3 +89,20 @@ class ArmOutput(BaseModel):
     abstained: int = Field(default=0, ge=0)
     failed: int = Field(default=0, ge=0)
     cost: CostLatency | None = None
+
+    @model_validator(mode="after")
+    def _check_counts_within_attempted(self) -> ArmOutput:
+        """`abstained + failed` cannot exceed `attempted` when it is known.
+
+        Without this bound, `abstention_rate`/`failure_rate` could exceed 1.0 —
+        a nonsensical rate that reads like a metric bug rather than the bad
+        input it actually is. When `attempted` is `None` (the arm did not report
+        an input count) there is no denominator to bound against, so the counts
+        pass through and the rates report honest-null instead (ADR-0009).
+        """
+        if self.attempted is not None and self.abstained + self.failed > self.attempted:
+            raise ValueError(
+                f"abstained ({self.abstained}) + failed ({self.failed}) exceeds "
+                f"attempted ({self.attempted})"
+            )
+        return self

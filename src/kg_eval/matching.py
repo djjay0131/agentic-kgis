@@ -20,8 +20,6 @@ candidate), which is exactly the per-unit signal the bootstrap resamples over.
 
 from __future__ import annotations
 
-import json
-
 from pydantic import BaseModel, ConfigDict
 
 from kg_contracts.candidates import (
@@ -32,9 +30,25 @@ from kg_contracts.candidates import (
     SubjectRef,
 )
 from kg_contracts.identity import EntityRef
-from kg_eval.goldset import GoldAttribute, GoldEntity, GoldRelation, GoldSet
+from kg_eval.goldset import GoldAttribute, GoldEntity, GoldRelation, GoldSet, norm_value
 
 MatchKey = tuple[str, ...]
+
+__all__ = [
+    "CategoryMatch",
+    "MatchKey",
+    "attribute_key_candidate",
+    "attribute_key_gold",
+    "canon_ref",
+    "entity_key_candidate",
+    "entity_key_gold",
+    "match_attributes",
+    "match_entities",
+    "match_relations",
+    "norm_value",
+    "relation_key_candidate",
+    "relation_key_gold",
+]
 
 
 def canon_ref(ref: SubjectRef) -> str:
@@ -49,26 +63,12 @@ def canon_ref(ref: SubjectRef) -> str:
     return ref
 
 
-def norm_value(value: object) -> str:
-    """Stable string normalization of an attribute value.
-
-    JSON with sorted keys for containers, `repr`-free scalars otherwise, so
-    `200` and `"200"` collapse to the same key and dict ordering never matters.
-    """
-    if isinstance(value, str):
-        return value
-    try:
-        return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-    except TypeError:
-        return str(value)
-
-
 def entity_key_candidate(c: EntityCandidate) -> MatchKey:
     return ("entity", c.entity_type, c.semantic_key)
 
 
 def entity_key_gold(g: GoldEntity) -> MatchKey:
-    return ("entity", g.entity_type, g.semantic_key)
+    return g.match_key()
 
 
 def relation_key_candidate(c: RelationCandidate) -> MatchKey:
@@ -76,7 +76,7 @@ def relation_key_candidate(c: RelationCandidate) -> MatchKey:
 
 
 def relation_key_gold(g: GoldRelation) -> MatchKey:
-    return ("relation", g.relation_type, g.subject, g.object)
+    return g.match_key()
 
 
 def attribute_key_candidate(c: AttributeAssertionCandidate) -> MatchKey:
@@ -84,7 +84,7 @@ def attribute_key_candidate(c: AttributeAssertionCandidate) -> MatchKey:
 
 
 def attribute_key_gold(g: GoldAttribute) -> MatchKey:
-    return ("attribute", g.subject, g.attribute, norm_value(g.value))
+    return g.match_key()
 
 
 class CategoryMatch(BaseModel):
