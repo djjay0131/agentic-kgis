@@ -70,24 +70,6 @@ def _make_validator(value_type: type[VT]) -> Callable[[object], FrozenMapping]:
     return _validate
 
 
-def frozen_dict(value_type: type[VT]) -> object:
-    """Annotated `Mapping[str, VT]` that validates to a `FrozenMapping`.
-
-    A general-purpose factory for dynamic `value_type`s (e.g. a nested
-    model). Note for callers: mypy cannot recognize a function call's
-    result as a type, so a field annotated with `frozen_dict(SomeType)`
-    directly needs a local `# type: ignore[valid-type]` — unlike
-    `FrozenDictObject`/`FrozenDictFloat` below, which are declared as
-    literal `Annotated[...]` type aliases for exactly this reason and
-    type-check cleanly wherever they're used.
-    """
-    return Annotated[
-        Mapping[str, value_type],  # type: ignore[valid-type]
-        PlainValidator(_make_validator(value_type)),
-        PlainSerializer(lambda m: dict(m), return_type=dict),
-    ]
-
-
 FrozenDictObject: TypeAlias = Annotated[
     Mapping[str, object],
     PlainValidator(_make_validator(object)),

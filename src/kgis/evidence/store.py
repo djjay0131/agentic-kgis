@@ -28,7 +28,8 @@ class SqliteEvidenceRegistry:
     def close(self) -> None:
         self._conn.close()
 
-    def put(self, evidence: Evidence) -> None:
+    def _put_stmt(self, evidence: Evidence) -> None:
+        """Execute the INSERT for one Evidence without committing."""
         vt = evidence.valid_time
         self._conn.execute(
             "INSERT OR REPLACE INTO evidence (evidence_id, source_type, source_locator, "
@@ -44,11 +45,23 @@ class SqliteEvidenceRegistry:
                 evidence.model_dump_json(),
             ),
         )
+
+    def put(self, evidence: Evidence) -> None:
+        self._put_stmt(evidence)
         self._conn.commit()
 
     def put_many(self, items: Iterable[Evidence]) -> None:
-        for item in items:
-            self.put(item)
+        # Atomic batch write: all rows land in a single transaction. If any
+        # insert fails partway, roll the whole batch back rather than leaving a
+        # partially-applied write uncommitted on the shared connection — the
+        # same discipline as `add_refs` and the ledger's transition writes.
+        try:
+            for item in items:
+                self._put_stmt(item)
+        except Exception:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def get(self, evidence_id: str) -> Evidence | None:
         r = self._conn.execute(

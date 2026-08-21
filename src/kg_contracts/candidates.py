@@ -142,11 +142,11 @@ FrozenRepresentations: TypeAlias = Annotated[
     PlainValidator(_make_validator(Representation)),
     PlainSerializer(lambda m: dict(m), return_type=dict),
 ]
-"""`dict[str, Representation]`, at-rest-immutable (Issue #7). A literal
-`Annotated[...]` alias (not `frozen_dict(Representation)`'s call-return
-directly) so it type-checks under mypy --strict as a field annotation —
-see `kg_contracts._frozen.frozen_dict` for why a function call cannot back
-a type alias."""
+"""`dict[str, Representation]`, at-rest-immutable (Issue #7). Declared as a
+literal `Annotated[...]` type alias (mirroring `FrozenDictObject` /
+`FrozenDictFloat` in `kg_contracts._frozen`) rather than being built by a
+factory function: mypy --strict cannot recognize a function call's result as
+a type, so only a literal alias type-checks cleanly as a field annotation."""
 
 
 class CandidateEnvelope(BaseModel):
