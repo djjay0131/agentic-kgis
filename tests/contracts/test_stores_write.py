@@ -130,6 +130,27 @@ def test_commit_result_not_committed_carries_failed_preconditions():
     assert result.failed_preconditions == preconditions
 
 
+def test_commit_result_not_committed_without_reason_rejected():
+    # fail-closed: a non-commit must name why (error or failed_preconditions),
+    # never a silent failure the caller cannot act on.
+    with pytest.raises(ValidationError, match="requires a reason"):
+        CommitResult(batch_id="mb_1", committed=False)
+
+
+def test_commit_result_not_committed_with_only_error_is_accepted():
+    result = CommitResult(batch_id="mb_1", committed=False, error="backend unavailable")
+    assert result.committed is False
+    assert result.failed_preconditions == ()
+
+
+def test_commit_result_not_committed_with_only_failed_preconditions_is_accepted():
+    result = CommitResult(
+        batch_id="mb_1", committed=False, failed_preconditions=(_precondition(),)
+    )
+    assert result.committed is False
+    assert result.error is None
+
+
 # --- 5. GraphMutationBatch requires >=1 operation; JSON round-trip equality ---
 
 

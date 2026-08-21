@@ -58,7 +58,12 @@ class VersionChange(BaseModel):
 
     component_kind: VersionedComponentKind
     component_name: str = Field(min_length=1)
-    from_version: str | None
+    # `min_length=1` closes the `from_version=""` loophole (issue #8): an
+    # empty string is not None, so without this it slips past the
+    # `from_version is None` introduction rule below while naming no prior
+    # version. "" is never a legitimate version — reject it rather than
+    # silently coercing it to None (ADR-0008 repair-or-reject discipline).
+    from_version: str | None = Field(min_length=1)
     to_version: str = Field(min_length=1)
     compatibility: CompatibilityClass
 

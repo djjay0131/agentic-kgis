@@ -343,6 +343,15 @@ class CommitResult(BaseModel):
     def _check_committed_requires_new_epoch(self) -> "CommitResult":
         if self.committed and self.new_epoch is None:
             raise ValueError("committed=True requires new_epoch")
+        # Fail-closed (issue #8): a non-commit must name why. Without this a
+        # `committed=False` result with no `error` and no `failed_preconditions`
+        # is a silent failure the caller cannot act on — neither a stale
+        # snapshot to re-evaluate nor an error to surface.
+        if not self.committed and self.error is None and not self.failed_preconditions:
+            raise ValueError(
+                "committed=False requires a reason: set error or a non-empty "
+                "failed_preconditions"
+            )
         return self
 
 
