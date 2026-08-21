@@ -6,6 +6,10 @@ not a surprise in production.
 
 ## `CompositeCandidateBuilder`: all-or-nothing row rejection (issue #11)
 
+This section is the source of truth for the behavior; the
+`CompositeCandidateBuilder` docstring gives a one-paragraph summary and points
+here.
+
 `CompositeCandidateBuilder` fans one record across several sub-builders (e.g. a
 player-entity builder plus a plays-for-relation builder). Its `required_fields`
 property **unions every sub-builder's `required_fields`**, and the pipeline

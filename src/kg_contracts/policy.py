@@ -83,10 +83,12 @@ class ConfidencePolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # Every threshold is a probability/score in [0, 1]. The ordering
-    # validator and conservative routing already fail closed, but per-field
-    # ge/le bounds reject a nonsense threshold (e.g. 1.5) at construction
-    # rather than letting it silently distort routing (issue #8).
+    # Every threshold is a probability/score in [0, 1]. The per-field ge/le
+    # bounds are a fail-closed NARROWING of the frozen contract (issue #8; ADR
+    # candidate 0007): they reject a nonsense threshold (e.g. 1.5) at
+    # construction rather than letting it silently distort routing. Since
+    # CandidateScores fields are already bounded [0, 1], an out-of-range
+    # threshold is meaningless. The ordering validator and routing are unchanged.
     policy_version: str = "1"
     auto_min_extraction: float = Field(default=0.95, ge=0.0, le=1.0)
     auto_min_source_reliability: float = Field(default=0.90, ge=0.0, le=1.0)
