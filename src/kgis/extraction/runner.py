@@ -55,7 +55,7 @@ from kgis.extraction.provenance import (
     chunk_evidence_ref,
     document_evidence_id,
 )
-from kgis.ids import DeterministicIdStrategy, IdStrategy, new_run_id
+from kgis.ids import DeterministicIdStrategy, IdStrategy, new_job_id, new_run_id
 from kgis.report import DryRunPlan, IngestionReport
 from kgis.validate import CandidateValidator, OntologyCandidateValidator
 
@@ -136,7 +136,7 @@ class ExtractionPipeline:
         self._concurrency = concurrency
         self._batch_size = batch_size
         self._emit_document_artifacts = emit_document_artifacts
-        self._job_id = job_id or new_run_id().replace("run_", "job_")
+        self._job_id = job_id or new_job_id()
         self._extractors = tuple(
             LLMExtractor(config, client) for config in self._extractor_configs
         )
@@ -199,6 +199,15 @@ class ExtractionPipeline:
         The parallel phase only calls the model, parses, and builds — no shared
         registry or sink. The single-threaded reduce phase writes evidence and
         admits candidates, so SQLite connections stay confined to one thread.
+
+        The two failure boundaries are deliberately different. A per-(extractor,
+        chunk) fault — a model error, malformed output, an un-buildable row — is
+        *isolated* by `_run_one` and reported (spec §9): one extractor must not
+        take down its siblings. But a reduce-phase *infrastructure* failure —
+        `registry.put`/`add_refs` here, `sink.submit` in `_submit_all` — is NOT
+        caught: a real SQLite/sink error is not a data fault to quarantine, and
+        must surface and abort the run rather than silently drop evidence or
+        candidates.
         """
         items = self._plan_work(run_id)
         outcomes = self._extract_all(items, report)
@@ -382,6 +391,9 @@ class ExtractionPipeline:
         )
 
     def _submit_all(self, planned: Sequence[Candidate], report: IngestionReport) -> None:
+        # A `sink.submit` failure is intentionally NOT isolated (see `_collect`):
+        # a real ledger/sink error must abort the run, not be swallowed like a
+        # per-extractor data fault.
         for batch in _batched(planned, self._batch_size):
             result = self._sink.submit(batch)
             for outcome in result.outcomes:

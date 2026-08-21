@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 from collections.abc import Mapping
 
 from kg_contracts.ingestion import CompletionClient
@@ -136,6 +137,13 @@ class RecordingCompletionClient:
     def __init__(self, inner: CompletionClient) -> None:
         self._inner = inner
         self._responses: dict[str, str] = {}
+        # A general-purpose wrapper: it may be driven from several threads at
+        # once (the extraction runner records under its default concurrency).
+        # Distinct-key writes plus CPython's GIL would already make the dict
+        # write safe today, but that is an implementation detail a caller
+        # should not have to know — the lock makes the guarantee explicit and
+        # holds if the wrapper is ever reused with colliding keys.
+        self._lock = threading.Lock()
 
     @property
     def deterministic(self) -> bool:
@@ -143,11 +151,13 @@ class RecordingCompletionClient:
 
     @property
     def responses(self) -> dict[str, str]:
-        return dict(self._responses)
+        with self._lock:
+            return dict(self._responses)
 
     def complete(self, prompt: str, *, system: str | None = None) -> str:
         response = self._inner.complete(prompt, system=system)
-        self._responses[request_key(prompt, system)] = response
+        with self._lock:
+            self._responses[request_key(prompt, system)] = response
         return response
 
     def to_json(self) -> str:
