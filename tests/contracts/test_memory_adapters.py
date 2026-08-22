@@ -24,6 +24,7 @@ from kg_contracts.testing.contract import (
     MemoryReviewQueue,
     ReviewQueueContract,
 )
+from kg_contracts.identity import new_identity_id
 from kg_contracts.testing.factories import make_assertion, make_entity, make_entity_candidate
 from kg_contracts.testing.memory import MemoryCandidateSink, MemoryGraphStore
 
@@ -173,6 +174,39 @@ def test_non_temporal_store_raises_unsupported_capability_for_temporal_options()
         store.assertions_for(entity.identity_id, options=GraphReadOptions(valid_at=NOW))
     with pytest.raises(UnsupportedCapabilityError):
         store.assertions_for(entity.identity_id, options=GraphReadOptions(transaction_at=NOW))
+
+
+def test_revoked_record_visible_by_default():
+    # REVOKED read-visibility (issue #8): the canonical read surface only
+    # mandates hiding SUPERSEDED by default (`include_superseded`). REVOKED
+    # records deliberately stay visible — there is no `include_revoked`
+    # option. This pins current behavior; auto-hiding REVOKED would be a
+    # durable read-semantics change (an ADR, not a test-double tweak).
+    store = MemoryGraphStore()
+    revoked_entity = make_entity(status=CurationStatus.REVOKED)
+    store.put_entity(revoked_entity)
+    assert store.get_entity(revoked_entity.identity_id) is not None
+
+    revoked_assertion = make_assertion(
+        subject_identity=revoked_entity.identity_id, status=CurationStatus.REVOKED
+    )
+    store.put_assertion(revoked_assertion)
+    assert store.assertions_for(revoked_entity.identity_id) == [revoked_assertion]
+
+
+def test_superseded_is_hidden_by_default_but_revoked_is_not():
+    # The asymmetry, pinned in one place: in the same position, SUPERSEDED is
+    # hidden without include_superseded while REVOKED is not.
+    store = MemoryGraphStore()
+    ident = new_identity_id("g1")
+    superseded = make_assertion(subject_identity=ident, status=CurationStatus.SUPERSEDED)
+    revoked = make_assertion(subject_identity=ident, status=CurationStatus.REVOKED)
+    store.put_assertion(superseded)
+    store.put_assertion(revoked)
+
+    visible = store.assertions_for(ident)
+    assert superseded not in visible
+    assert revoked in visible
 
 
 def test_memory_graph_store_other_five_operation_types_raise_not_implemented_plan_3():

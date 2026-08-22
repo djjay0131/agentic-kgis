@@ -50,3 +50,25 @@ def test_roundtrip_serialization():
     c = ObservationCandidate(**ENV, metric="speed_avg", value=42.1)
     again = candidate_adapter.validate_json(c.model_dump_json())
     assert again == c
+
+
+def test_observation_parameters_frozen_including_omitted_default():
+    # parameters omitted entirely -> default_factory=dict; must still be
+    # frozen (validate_default=True), not a silently mutable plain dict.
+    c = ObservationCandidate(**ENV, metric="speed_avg", value=42.1)
+    with pytest.raises(TypeError):
+        c.parameters["x"] = 1  # type: ignore[index]
+
+
+def test_derived_assertion_conclusion_frozen():
+    from kg_contracts.candidates import DerivedAssertionCandidate
+    from kg_contracts.derivation import Derivation, DerivationInput
+
+    d = Derivation(
+        method="m", deterministic=True,
+        inputs=(DerivationInput(kind="assertion", ref="a1"),),
+        implementation_version="v1",
+    )
+    c = DerivedAssertionCandidate(**ENV, derivation=d, conclusion={"value": 1})
+    with pytest.raises(TypeError):
+        c.conclusion["value"] = 2  # type: ignore[index]

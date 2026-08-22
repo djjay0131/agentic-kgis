@@ -25,6 +25,8 @@ from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from kg_contracts._frozen import FrozenDictFloat
+
 
 class Backend(StrEnum):
     """Storage backends a registered graph can live on."""
@@ -87,11 +89,11 @@ class Recommendation(BaseModel):
     an instruction that gets executed automatically.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 
     action: Literal["extend", "create"]
     graph_name: str | None = None
-    factor_scores: dict[str, float] = Field(default_factory=dict)
+    factor_scores: FrozenDictFloat = Field(default_factory=dict)
     checklist: tuple[str, ...] = ()
     reasons: tuple[str, ...] = Field(min_length=1)
 

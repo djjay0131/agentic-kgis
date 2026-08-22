@@ -18,6 +18,8 @@ alongside it.
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from kg_contracts._frozen import FrozenDictObject
+
 
 class DerivationInput(BaseModel):
     """One input consumed by a derivation, referencing another record.
@@ -47,13 +49,13 @@ class Derivation(BaseModel):
     depends on has since changed incompatibly).
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 
     method: str = Field(min_length=1)
     deterministic: bool
     inputs: tuple[DerivationInput, ...]
     implementation_version: str = Field(min_length=1)
-    parameters: dict[str, object] = Field(default_factory=dict)
+    parameters: FrozenDictObject = Field(default_factory=dict)
     warnings: tuple[str, ...] = ()
     units: str | None = None
     coordinate_system: str | None = None
