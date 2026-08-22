@@ -164,3 +164,19 @@ def test_duck_typed_fake_satisfies_registry_store():
     assert store.get("baseball-kg") == descriptor
     assert store.get("missing") is None
     assert store.all() == [descriptor]
+
+
+# --- 6. Recommendation.factor_scores frozen at rest (Issue #7) ---
+
+
+def test_recommendation_factor_scores_frozen_including_omitted_default():
+    # factor_scores omitted entirely -> default_factory=dict; must still be
+    # frozen (validate_default=True), not a silently mutable plain dict.
+    rec = Recommendation(action="create", checklist=(), reasons=("test",))
+    with pytest.raises(TypeError):
+        rec.factor_scores["tenancy"] = 0.9  # type: ignore[index]
+
+    rec2 = Recommendation(action="create", factor_scores={"tenancy": 0.5},
+                          checklist=(), reasons=("test",))
+    with pytest.raises(TypeError):
+        rec2.factor_scores["tenancy"] = 0.9  # type: ignore[index]

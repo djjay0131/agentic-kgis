@@ -62,3 +62,39 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   counts sink-side `INVALID`. +6 tests (488 passed), ruff/mypy strict clean.
   ADR candidate 0003 split into 0003-A (ULID helper) + 0004 (attribute
   vocabulary). 0001 stays local; 0002 facade deferred.
+- 2026-07-22: **Plan 2 (candidate ledger + evidence registry) executed** on
+  `plan/plan-2-ledger-evidence`. Issue #7 closed — `kg_contracts._frozen`
+  adds `FrozenMapping`/`FrozenDict` (`FrozenDictObject`, `FrozenDictFloat`)
+  applied to every at-rest dict payload field (`CurationOperation.payload`/
+  `reversal_data`, `ResolutionDecision.score_vector`, `ReviewItem.payload`,
+  `ReviewDecision.edited_payload`, `AuditRecord.score_vector`,
+  candidate `properties`/`parameters`/`conclusion`/`representations`,
+  `Derivation.parameters`, registry `factor_scores`); this is the only
+  group that edited `kg_contracts`. Net-new `src/kgis/ledger/`:
+  `SqliteCandidateLedger` (stdlib `sqlite3`) implements `CandidateSink` +
+  `LedgerReader` with cross-run idempotent `submit()` by semantic key, the
+  full persisted `LedgerRow` (dedup key, retry counter, quarantine reason,
+  bitemporal valid/transaction time), the `ProcessingState` transition
+  table/guard (R1: `OBSOLETE`), revoke/erase + `IdentityMode`/
+  `ConsumerProfile` (`BASEBALL_AI_PROFILE`) governance surface, and
+  `SqliteAuditStream` (append-only `audit_records`, hash-only tombstone on
+  erase) wired into every transition. `src/kgis/evidence/`:
+  `SqliteEvidenceRegistry` persists PRESENT/ABSENT/ERROR `Evidence` and
+  resolves `EvidenceRef` relationships without dropping dangling refs.
+  ADRs 0012 (ledger persistence), 0013 (revoke/erasure), 0014 (identity
+  mode/consumer profile) written and indexed, closing Issue #2. The merged
+  Plan 4 ingestion pipeline composes onto the persistent ledger unchanged;
+  `plan().plan.ledger_duplicates` returns a real count
+  (`tests/kgis/test_ingestion_ledger_integration.py`). New reusable
+  kgis-local suites `PersistentLedgerContract` (reopen/cross-run replay)
+  and `EvidenceRegistryContract`, alongside the unchanged Plan 1
+  `CandidateSinkContract`/`LedgerReaderContract` — all pass against the
+  SQLite stores. Public API stabilized in `src/kgis/ledger/__init__.py` +
+  `src/kgis/evidence/__init__.py`
+  (`tests/kgis/test_public_api.py`). 551 tests green, `ruff check src
+  tests` clean, `mypy src` (strict) clean. Not built yet: canonical-graph
+  write path / `GraphMutationStore` (Plan 3, KGCS curation core +
+  executor); entity resolution (Plan 5); durable `ReviewQueue` (Plan 6);
+  heavy graph backends and full temporal query on every backend
+  (capability-declared later — only SQLite/memory ships temporal
+  capability now).
