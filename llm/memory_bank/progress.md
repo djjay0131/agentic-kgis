@@ -62,39 +62,59 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   counts sink-side `INVALID`. +6 tests (488 passed), ruff/mypy strict clean.
   ADR candidate 0003 split into 0003-A (ULID helper) + 0004 (attribute
   vocabulary). 0001 stays local; 0002 facade deferred.
-- 2026-07-22: **Plan 2 (candidate ledger + evidence registry) executed** on
-  `plan/plan-2-ledger-evidence`. Issue #7 closed — `kg_contracts._frozen`
-  adds `FrozenMapping`/`FrozenDict` (`FrozenDictObject`, `FrozenDictFloat`)
-  applied to every at-rest dict payload field (`CurationOperation.payload`/
-  `reversal_data`, `ResolutionDecision.score_vector`, `ReviewItem.payload`,
-  `ReviewDecision.edited_payload`, `AuditRecord.score_vector`,
-  candidate `properties`/`parameters`/`conclusion`/`representations`,
-  `Derivation.parameters`, registry `factor_scores`); this is the only
-  group that edited `kg_contracts`. Net-new `src/kgis/ledger/`:
-  `SqliteCandidateLedger` (stdlib `sqlite3`) implements `CandidateSink` +
-  `LedgerReader` with cross-run idempotent `submit()` by semantic key, the
-  full persisted `LedgerRow` (dedup key, retry counter, quarantine reason,
-  bitemporal valid/transaction time), the `ProcessingState` transition
-  table/guard (R1: `OBSOLETE`), revoke/erase + `IdentityMode`/
-  `ConsumerProfile` (`BASEBALL_AI_PROFILE`) governance surface, and
-  `SqliteAuditStream` (append-only `audit_records`, hash-only tombstone on
-  erase) wired into every transition. `src/kgis/evidence/`:
-  `SqliteEvidenceRegistry` persists PRESENT/ABSENT/ERROR `Evidence` and
-  resolves `EvidenceRef` relationships without dropping dangling refs.
-  ADRs 0012 (ledger persistence), 0013 (revoke/erasure), 0014 (identity
-  mode/consumer profile) written and indexed, closing Issue #2. The merged
-  Plan 4 ingestion pipeline composes onto the persistent ledger unchanged;
-  `plan().plan.ledger_duplicates` returns a real count
-  (`tests/kgis/test_ingestion_ledger_integration.py`). New reusable
-  kgis-local suites `PersistentLedgerContract` (reopen/cross-run replay)
-  and `EvidenceRegistryContract`, alongside the unchanged Plan 1
-  `CandidateSinkContract`/`LedgerReaderContract` — all pass against the
-  SQLite stores. Public API stabilized in `src/kgis/ledger/__init__.py` +
-  `src/kgis/evidence/__init__.py`
-  (`tests/kgis/test_public_api.py`). 551 tests green, `ruff check src
-  tests` clean, `mypy src` (strict) clean. Not built yet: canonical-graph
-  write path / `GraphMutationStore` (Plan 3, KGCS curation core +
-  executor); entity resolution (Plan 5); durable `ReviewQueue` (Plan 6);
-  heavy graph backends and full temporal query on every backend
-  (capability-declared later — only SQLite/memory ships temporal
-  capability now).
+- 2026-08-21: **Remaining KGIS v1 backlog executed — six independently
+  reviewed, owner-ready PRs.** An orchestrated multi-agent run took the rest of
+  the KGIS v1 backlog through the full governance loop (implementer →
+  independent reviewer inspecting the real diff → fix loop → marked ready); each
+  PR reviewed by an agent other than its author, zero blockers survived, none
+  self-merged. The six PRs, with recommended merge order:
+    1. **#15** Plan 2 remediation (Issue #16) — logical-erasure wording; unified
+       `LIVE_ROW_PREDICATE` across partial unique index + sink dedup +
+       `ledger_entries()`; plan()/run() agree under default
+       `DeterministicIdStrategy` (former strict-xfail now passes); safe v1→v2
+       migration; dead `frozen_dict()` removed; evidence `put_many` atomic.
+       (562 tests on branch.)
+    2. **#20** contracts hygiene — Issue #8 safe subset (pattern/alias dedup,
+       fail-closed `CommitResult`/`VersionChange`/`ConfidencePolicy`
+       validators), #10 build-boundary comment, #11 `CompositeCandidateBuilder`
+       adopter doc, **ruff pinned to 0.15.22** (fixes unpinned-ruff drift → ~63
+       spurious findings in fresh envs). ADR candidate 0007. (499 tests.)
+    3. **#18** registry/advisor (Plan 7) — persistent `SqliteRegistryStore`
+       behind the frozen `RegistryStore` protocol; graph-descriptor versioning
+       + extension-attribute sidecar; 12-factor advisor (1/2/5/6/11 automated,
+       7 human-assessed); four outcomes + `INSUFFICIENT_INFORMATION`
+       honest-null; human-gated corpus; deterministic recommendations; no auto
+       graph creation. ADR candidates 0004(amend), 0005, 0006. (518 tests.)
+    4. **#19** kg_eval (Plan 6, KGIS part) — named arms, extraction gold sets,
+       P/R/F1, evidence-span/reference validity, ontology/hallucination/
+       abstention metrics, seeded bootstrap CIs, ablation with honest-null
+       verdicts, JSON+Markdown reports, `MetricProvider` seam (no kgcs import).
+       (535 tests.)
+    5. **#21** Plan 4 structured sync — injected `RowProvider`/DB-API source
+       port (no vendor drivers in core), materialized snapshot for plan/run
+       honesty, stable key-based source coordinates, deterministic snapshot
+       version, cross-run idempotency via the persistent ledger, resolvable
+       per-row evidence. ADR candidate 0008. Stacked on #15. (599 tests.)
+    6. **#22** Plan 4 LLM extraction — document/chunk source, per-entity-type
+       extractor config, injected `CompletionClient` (no vendor SDK; replay
+       client for deterministic tests), bounded-concurrency extraction with
+       single-threaded SQLite reduce, failure isolation, honest
+       nondeterministic dry-run, resolvable passage evidence, producer/model/
+       version capture. ADR candidate 0009. Stacked on #15. (623 tests.)
+  Wave 3 integration verified all six compose cleanly: combined **748 passed,
+  ruff clean repo-wide, mypy --strict clean (78 files), all 11 architectural
+  invariants PASS.** New ADR candidates 0004(amend), 0005, 0006, 0007, 0008,
+  0009 join the existing 0001, 0002, 0003-A, 0004 — all still candidates
+  awaiting owner promotion. PRs are owner-ready but unmerged; none self-merged.
+
+Works now: `kg_contracts` v2; both ingestion modes (deterministic structured
+sync + LLM document extraction) on a persistent candidate ledger + evidence
+registry; kg_eval v1 harness (P/R/F1, span/reference validity, hallucination/
+abstention, bootstrap CIs, honest-null ablation); persistent graph registry +
+extend-vs-new advisor with honest-null; deterministic IDs and cross-run
+idempotency; ruff pinned to 0.15.22.
+Not built yet: KGCS Plan 3 curation core+executor, KGCS Plan 5 entity
+resolution, the KGCS review-API part of Plan 6; adopter rollouts (baseball /
+traffic / research / construction); polished review UI; streaming ingestion;
+full service wrapper; full temporal query on every backend. (These are NOT
+unfinished KGIS core.)
