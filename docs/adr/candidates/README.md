@@ -19,7 +19,9 @@ future plan will hit again.
 | [0001](0001-record-scoped-validation.md) | `ValidationDecision` is keyed on `candidate_id`, but records are rejected before candidates exist | Two-tier validation: record-tier `RecordValidation` (kgis) + candidate-tier `ValidationDecision` (contract) |
 | [0002](0002-source-adapter-composition.md) | `Source.fetch()` yields `Candidate`, so the read/normalize/validate/build stages cannot sit upstream of a `Source` | Stages compose *inward*; `IngestPipeline` is the composition, `Source` conformance deferred |
 | [0003-A](0003-a-public-deterministic-id-helper.md) | No public deterministic-ID helper on `kg_contracts` (the Crockford encoder is private) | Reimplemented Crockford encoder in `kgis.ids`, guarded by a drift test |
-| [0004](0004-graph-descriptor-attribute-vocabulary.md) | `GraphDescriptor` declares node and edge types but no attribute vocabulary | Ontology attributes left unconstrained when read from a descriptor |
+| [0004](0004-graph-descriptor-attribute-vocabulary.md) | `GraphDescriptor` declares node and edge types but no attribute vocabulary | Ontology attributes left unconstrained when read from a descriptor; Plan 7 registry carries them as extension attributes |
+| [0005](0005-open-backend-identifier.md) | `Backend` is a closed enum (Spanner/Neo4j/Memory), excluding Postgres/AGE-class backends (Issue #2 item 3) | Registry stores an open `backend.open_id` extension attribute; `resolved_backend` prefers it |
+| [0006](0006-recommendation-outcomes-and-honest-null.md) | `Recommendation` is binary (extend/create) with no honest null, but ADR-0005 (amended) has four outcomes + insufficient-information | `kgis.registry.AdvisorRecommendation` models all four outcomes + the null; `.to_contract()` projects down (and returns `None` for the null) |
 
 > Note: 0003-A and 0004 were split from a single joint candidate (originally
 > `0003-contract-gaps-ulid-and-attributes`) per the PR #9 review — the ID

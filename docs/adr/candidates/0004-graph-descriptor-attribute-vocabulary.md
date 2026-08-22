@@ -73,9 +73,33 @@ it is dispositioned separately from the ID helper.
 - [x] Data architecture
 - [x] Implementation
 
+## Resolution in the Plan 7 registry (2026-08-21)
+
+The persistent registry (`src/kgis/registry/store.py`) resolves this gap
+without editing the frozen contract, using **registry extension attributes**:
+a per-graph-version key/value sidecar persisted alongside each
+`GraphDescriptor`. A graph declares its attribute vocabulary under the
+reserved key `attribute_types` (a comma-separated list), and
+`RegisteredGraph.attribute_types()` reads it back. The advisor's ontology
+factor already scores against `node_types ∪ edge_types ∪ attribute_types`, so
+attribute governance is symmetric with entity/relation governance *at the
+registry layer* today.
+
+This is the least-invasive resolution: no contract change, and if the owner
+accepts this candidate the same data promotes cleanly into a
+`GraphDescriptor.attribute_types` field. Until then, the vocabulary lives in
+the extension sidecar rather than the frozen model. The Sprint 1
+`from_descriptor()` workaround (attributes unconstrained) is unchanged for
+callers that read a bare descriptor; a caller that reads the registry's
+extension attributes can now enforce attributes.
+
+The same extension-attribute mechanism carries the open backend identifier —
+see candidate [0005](0005-open-backend-identifier.md).
+
 ## Related Documents
 
 - `src/kgis/ontology.py` (workaround, `from_descriptor`)
+- `src/kgis/registry/store.py`, `src/kgis/registry/models.py` (Plan 7 resolution)
 - `kg_contracts/registry.py`
 
 ## Supersedes
