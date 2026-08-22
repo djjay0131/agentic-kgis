@@ -42,7 +42,7 @@ The pipeline never writes to a graph. Its only write surface is
 because it holds no reference that can.
 """
 
-from typing import Sequence
+from typing import Protocol, Sequence, runtime_checkable
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -71,6 +71,18 @@ from kgis.validate import (
 )
 
 DEFAULT_BATCH_SIZE = 500
+
+
+@runtime_checkable
+class _CandidateIdProbe(Protocol):
+    """A ledger reader that can answer "does this candidate_id exist in ANY
+    row?" — the global-PK collision `run()` would hit. Optional capability on
+    top of the frozen `LedgerReader` contract (kgis-level, e.g.
+    `SqliteCandidateLedger.has_candidate_id`); readers without it fall back to
+    live-`semantic_key` prediction only.
+    """
+
+    def has_candidate_id(self, candidate_id: str) -> bool: ...
 
 
 class IngestPipeline:
@@ -344,6 +356,17 @@ class IngestPipeline:
         )
 
     def _count_ledger_duplicates(self, planned: Sequence[Candidate]) -> int | None:
+        """Predict exactly what `run()`'s sink would reject as a DUPLICATE.
+
+        A planned candidate is a duplicate if EITHER (a) its `semantic_key`
+        already has a *live* ledger row (the sink deduplicates live rows), OR
+        (b) its `candidate_id` already exists on ANY row — live, revoked, or
+        erased tombstone — because that row holds the `candidate_id` PRIMARY
+        KEY and the sink's INSERT would collide on it (Issue #16). The two
+        checks are OR'd per candidate so a candidate tripping both (the common
+        deterministic-id live replay) is counted once. Absent the (b) probe
+        (a reader without `has_candidate_id`), prediction degrades to (a) only.
+        """
         if self._ledger_reader is None:
             return None
         existing = {
@@ -351,7 +374,17 @@ class IngestPipeline:
             for entry in self._ledger_reader.ledger_entries()
             if entry.candidate.graph_id == self._graph_id
         }
-        return sum(1 for candidate in planned if candidate.semantic_key in existing)
+        probe = (
+            self._ledger_reader
+            if isinstance(self._ledger_reader, _CandidateIdProbe)
+            else None
+        )
+        return sum(
+            1
+            for candidate in planned
+            if candidate.semantic_key in existing
+            or (probe is not None and probe.has_candidate_id(candidate.candidate_id))
+        )
 
 
 def _batched(items: Sequence[Candidate], size: int) -> list[list[Candidate]]:
