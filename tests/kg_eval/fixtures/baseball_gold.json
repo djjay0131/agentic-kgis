@@ -1,0 +1,29 @@
+{
+  "gold_set_id": "baseball-v1",
+  "description": "tiny baseball extraction gold set",
+  "attempted": 10,
+  "entities": [
+    {"entity_type": "Player", "semantic_key": "player/p1", "evidence": {"source_locator": "roster.csv#row1", "quote": "Player 1"}},
+    {"entity_type": "Player", "semantic_key": "player/p2", "evidence": {"source_locator": "roster.csv#row2", "quote": "Player 2"}},
+    {"entity_type": "Player", "semantic_key": "player/p3", "evidence": {"source_locator": "roster.csv#row3", "quote": "Player 3"}},
+    {"entity_type": "Player", "semantic_key": "player/p4", "evidence": {"source_locator": "roster.csv#row4", "quote": "Player 4"}},
+    {"entity_type": "Player", "semantic_key": "player/p5", "evidence": {"source_locator": "roster.csv#row5", "quote": "Player 5"}},
+    {"entity_type": "Player", "semantic_key": "player/p6", "evidence": {"source_locator": "roster.csv#row6", "quote": "Player 6"}},
+    {"entity_type": "Player", "semantic_key": "player/p7", "evidence": {"source_locator": "roster.csv#row7", "quote": "Player 7"}},
+    {"entity_type": "Player", "semantic_key": "player/p8", "evidence": {"source_locator": "roster.csv#row8", "quote": "Player 8"}},
+    {"entity_type": "Player", "semantic_key": "player/p9", "evidence": {"source_locator": "roster.csv#row9", "quote": "Player 9"}},
+    {"entity_type": "Player", "semantic_key": "player/p10", "evidence": {"source_locator": "roster.csv#row10", "quote": "Player 10"}}
+  ],
+  "relations": [
+    {"relation_type": "PLAYS_FOR", "subject": "Player:usssa:p1", "object": "Team:usssa:t1"},
+    {"relation_type": "PLAYS_FOR", "subject": "Player:usssa:p2", "object": "Team:usssa:t1"},
+    {"relation_type": "PLAYS_FOR", "subject": "Player:usssa:p3", "object": "Team:usssa:t2"},
+    {"relation_type": "PLAYS_FOR", "subject": "Player:usssa:p4", "object": "Team:usssa:t2"}
+  ],
+  "attributes": [
+    {"subject": "Player:usssa:p1", "attribute": "height_cm", "value": 180},
+    {"subject": "Player:usssa:p2", "attribute": "height_cm", "value": 175},
+    {"subject": "Player:usssa:p3", "attribute": "bats", "value": "R"},
+    {"subject": "Player:usssa:p4", "attribute": "throws", "value": "L"}
+  ]
+}

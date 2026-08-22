@@ -1,5 +1,38 @@
 # Active Context — agentic-kgis
 
+Update 2026-07-22: **Plan 2 (candidate ledger + evidence registry) complete.**
+Issue #7 closed: `kg_contracts._frozen.FrozenDict` makes dict-typed payload
+fields (curation payloads/reversal data/score vectors, candidate
+properties/parameters/conclusion/representations, derivation parameters,
+registry factor_scores) read-only at rest with byte-stable JSON round-trip;
+this is the only Plan 2 group that touched `kg_contracts`. Everything else is
+net-new under `src/kgis/`: `SqliteCandidateLedger` (`src/kgis/ledger/`)
+persists candidates in SQLite behind the frozen `CandidateSink`/`LedgerReader`
+ports with cross-run idempotency by semantic key, the full persisted
+`LedgerRow` (dedup key, retry counter, quarantine reason, bitemporal
+valid/transaction time), an auditable `ProcessingState` lifecycle (R1:
+`OBSOLETE` replaces spec `SUPERSEDED`), and a revoke/erase governance surface
+with `IdentityMode`/`ConsumerProfile` (ADR-0012/0013/0014, Issue #2 folded
+in). `SqliteEvidenceRegistry` (`src/kgis/evidence/`) persists PRESENT/ABSENT/
+ERROR `Evidence` resolvable by `evidence_id` and resolves `EvidenceRef`
+relationships without silently dropping dangling refs. `SqliteAuditStream`
+writes an immutable `audit_records` row per ledger transition (hash-only
+tombstone on erase). The already-merged Plan 4 ingestion pipeline composes
+onto the persistent ledger unchanged — `plan().plan.ledger_duplicates` now
+returns a real count. Public surfaces stabilized: `from kgis.ledger import
+SqliteCandidateLedger, SqliteAuditStream, LedgerRow, PersistentLedgerContract,
+IdentityMode, ConsumerProfile, BASEBALL_AI_PROFILE, IdentityResolver,
+IllegalTransitionError, open_ledger_db` and `from kgis.evidence import
+SqliteEvidenceRegistry, EvidenceRegistryContract, EvidenceNotFoundError,
+open_evidence_db`. All new stores pass the reusable contract suites
+(`CandidateSinkContract`/`LedgerReaderContract` unchanged from Plan 1, plus
+new kgis-local `PersistentLedgerContract`/`EvidenceRegistryContract`). 551
+tests green (549 baseline + public-API surface test), `ruff check src tests`
+clean, `mypy src` strict clean. NEXT: Plan 3 (curation core + executor,
+KGCS) — the canonical-graph write path (`GraphMutationStore`) is still
+unbuilt; entity resolution (Plan 5) and durable review-queue (Plan 6) also
+deferred.
+
 Update 2026-07-17: **PR #9 review round 2 addressed.** A fresh full review of
 PR #9 (Sprint 1) raised three blocking correctness findings; all three are
 fixed on `feature/sprint-1-core-ingestion`. (1) Data-dependent build failures
