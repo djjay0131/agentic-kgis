@@ -71,6 +71,25 @@ def test_policy_risk_ordering_enforced():
         ConfidencePolicy(auto_max_policy_risk=0.6, human_min_policy_risk=0.5)
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "auto_min_extraction",
+        "auto_min_source_reliability",
+        "auto_max_policy_risk",
+        "assess_min_extraction",
+        "auto_min_identity_confidence",
+    ],
+)
+def test_thresholds_are_bounded_to_unit_interval(field: str):
+    # every threshold is a probability/score in [0, 1]: a nonsense value is
+    # rejected at construction, not left to silently distort routing (issue #8).
+    with pytest.raises(ValidationError):
+        ConfidencePolicy(**{field: 1.5})  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        ConfidencePolicy(**{field: -0.1})  # type: ignore[arg-type]
+
+
 def test_moderate_risk_poor_extraction_routes_human():
     # moderate risk floors at LLM_ASSESS but must not LOWER a genuinely bad
     # extraction below HUMAN: the extraction route (HUMAN) is more conservative.

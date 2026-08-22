@@ -131,3 +131,11 @@ class RandomIdStrategy:
 def new_run_id() -> str:
     """Mint a fresh `producer_run_id` for an ingest run."""
     return "run_" + random_suffix()
+
+
+def new_job_id() -> str:
+    """Mint a fresh `job_id` for an ingest job.
+
+    A job id is minted in its own right, not derived from a run id by string
+    surgery: a job may span several runs, so its identity is independent."""
+    return "job_" + random_suffix()
