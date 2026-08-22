@@ -23,6 +23,7 @@ future plan will hit again.
 | [0005](0005-open-backend-identifier.md) | `Backend` is a closed enum (Spanner/Neo4j/Memory), excluding Postgres/AGE-class backends (Issue #2 item 3) | Registry stores an open `backend.open_id` extension attribute; `resolved_backend` prefers it |
 | [0006](0006-recommendation-outcomes-and-honest-null.md) | `Recommendation` is binary (extend/create) with no honest null, but ADR-0005 (amended) has four outcomes + insufficient-information | `kgis.registry.AdvisorRecommendation` models all four outcomes + the null; `.to_contract()` projects down (and returns `None` for the null) |
 | [0007](0007-fail-closed-contract-narrowings.md) | Three Issue #8 validators narrow the accepted domain of the frozen `kg_contracts` (reasoned `CommitResult`, bounded `ConfidencePolicy` thresholds, non-empty `VersionChange.from_version`) | Implemented in PR #20 as owner-requested fail-closed hardening; owner to confirm no external `GraphMutationStore` returns a reasonless `committed=False` before promotion |
+| [0008](0008-structured-snapshot-version-provenance.md) | No first-class field records a candidate's source snapshot version/cursor (structured sync) | Snapshot version encoded in `SourceCoordinates.locator` (toggleable), also exposed on the reader |
 
 > Note: 0003-A and 0004 were split from a single joint candidate (originally
 > `0003-contract-gaps-ulid-and-attributes`) per the PR #9 review — the ID
