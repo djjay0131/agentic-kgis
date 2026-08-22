@@ -26,3 +26,6 @@ rewrite.
 | [0009](0009-kg-eval-and-honest-null.md) | kg_eval package and the honest-null policy | Accepted |
 | [0010](0010-write-path-mechanism.md) | Write-path mechanism: pure curation core, plan-applying executor, two-level store contracts | Accepted |
 | [0011](0011-canonical-reads-are-canonical-only.md) | Canonical reads are canonical-only; ledger visibility is a separate read surface | Accepted (supersedes ADR-0006 in part) |
+| [0012](0012-candidate-ledger-persistence.md) | Candidate ledger persistence via stdlib sqlite3 | Accepted |
+| [0013](0013-ledger-revoke-and-erasure.md) | Ledger revoke and erasure as row-governance, orthogonal to ProcessingState | Accepted |
+| [0014](0014-identity-mode-and-consumer-profile.md) | Identity mode and consumer profile as the adoption-gating surface | Accepted |
