@@ -339,6 +339,12 @@ class MemoryGraphStore:
     ) -> bool:
         if options.curation_epoch is not None and record_epoch > options.curation_epoch:
             return False
+        # REVOKED visibility (issue #8): the spec/read surface only mandate
+        # hiding SUPERSEDED by default (`include_superseded`). REVOKED records
+        # deliberately remain visible here — there is no `include_revoked`
+        # option, and inventing default REVOKED hiding would be a durable
+        # read-semantics change (an ADR, not a test-double tweak). Pinned by
+        # test_memory_adapters.py::test_revoked_record_visible_by_default.
         if status is CurationStatus.SUPERSEDED and not options.include_superseded:
             return False
         return True

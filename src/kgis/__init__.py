@@ -11,7 +11,7 @@ sequences them. Determinism is a property of the configured pipeline (inject
 `FixedClock` + `DeterministicIdStrategy`), not of the harness.
 """
 
-from kgis import extraction
+from kgis import extraction, structured
 from kgis.builders import (
     AttributeCandidateBuilder,
     BuildContext,
@@ -42,6 +42,7 @@ from kgis.sources import (
     JsonRecordReader,
     RecordReader,
 )
+from kgis.structured import StructuredSyncConfig
 from kgis.validate import (
     CandidateValidator,
     CompositeRecordValidator,
@@ -55,9 +56,11 @@ from kgis.validate import (
 __all__ = [
     # pipeline
     "IngestPipeline",
-    # extraction (LLM document-extraction mode)
+    # ingestion modes (Plan 4)
     "ExtractionPipeline",
+    "StructuredSyncConfig",
     "extraction",
+    "structured",
     # sources
     "CsvRecordReader",
     "IterableRecordReader",

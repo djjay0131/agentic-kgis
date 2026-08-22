@@ -33,6 +33,20 @@ def test_introduction_must_be_backward_compatible():
         )
 
 
+def test_empty_from_version_is_rejected_not_treated_as_introduction():
+    # "" is not None, so without min_length it would slip past the
+    # from_version-is-None introduction rule while naming no prior version.
+    # It must be rejected outright, never silently coerced (issue #8).
+    with pytest.raises(ValidationError):
+        VersionChange(
+            component_kind=VersionedComponentKind.EXTRACTOR,
+            component_name="player-extractor",
+            from_version="",
+            to_version="2.0.0",
+            compatibility=CompatibilityClass.REQUIRES_RE_EXTRACTION,
+        )
+
+
 def test_version_change_rejects_unknown_field():
     with pytest.raises(ValidationError):
         VersionChange(

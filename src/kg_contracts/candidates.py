@@ -45,15 +45,18 @@ from kg_contracts._frozen import FrozenDictObject, _make_validator
 from kg_contracts._ulid import new_ulid
 from kg_contracts.derivation import Derivation
 from kg_contracts.evidence import EvidenceRef, ValidPeriod
-from kg_contracts.identity import EntityRef, IdentityLinkKind, is_identity_id
+from kg_contracts.identity import (
+    _ENTITY_TYPE_PATTERN,
+    EntityRef,
+    IdentityLinkKind,
+    check_aliases_match_entity_type,
+    is_identity_id,
+)
 from kg_contracts.security import new_trace_id
 from kg_contracts.versioning import CONTRACT_VERSION
 
-# entity_type: a plain ^...$ pattern string consumed by pydantic
-# Field(pattern=...), which anchors/validates with its own (Rust regex)
-# engine — no compiled object needed, matching identity.py's EntityRef
-# convention.
-_ENTITY_TYPE_PATTERN = r"^[A-Z][A-Za-z0-9]*$"
+# entity_type: the single source of `_ENTITY_TYPE_PATTERN` is identity.py
+# (imported above), so the three sites that share it cannot drift (issue #8).
 
 # relation_type: validated by hand in a model_validator (to raise a custom
 # "UPPER_SNAKE" message), so it is compiled and checked with .fullmatch() —
@@ -197,14 +200,7 @@ class EntityCandidate(CandidateEnvelope):
 
     @model_validator(mode="after")
     def _check_aliases(self) -> "EntityCandidate":
-        if not self.aliases:
-            raise ValueError("aliases must be non-empty: an identity is made of its aliases")
-        for alias in self.aliases:
-            if alias.entity_type != self.entity_type:
-                raise ValueError(
-                    f"alias entity_type {alias.entity_type!r} does not match "
-                    f"candidate entity_type {self.entity_type!r}"
-                )
+        check_aliases_match_entity_type(self.aliases, self.entity_type, owner_noun="candidate")
         return self
 
 
