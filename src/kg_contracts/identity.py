@@ -110,6 +110,28 @@ class EntityRef(BaseModel):
             raise IdentityError(f"invalid entity ref {text!r}: {exc}") from exc
 
 
+def check_aliases_match_entity_type(
+    aliases: tuple[EntityRef, ...], entity_type: str, *, owner_noun: str
+) -> None:
+    """Shared alias invariant for `EntityCandidate` and `CanonicalEntity`.
+
+    An identity is *made of* its namespaced aliases (spec §5.2/§3.2): raise
+    if `aliases` is empty, or if any alias's `entity_type` differs from the
+    owner's `entity_type` (a `Player` cannot be identified by a `Coach`
+    alias). `owner_noun` names the owner in the mismatch message
+    (`"candidate"` / `"entity"`) so both call sites keep their exact prior
+    wording — extracting this loop must not change any message byte.
+    """
+    if not aliases:
+        raise ValueError("aliases must be non-empty: an identity is made of its aliases")
+    for alias in aliases:
+        if alias.entity_type != entity_type:
+            raise ValueError(
+                f"alias entity_type {alias.entity_type!r} does not match "
+                f"{owner_noun} entity_type {entity_type!r}"
+            )
+
+
 class IdentityLinkKind(StrEnum):
     """How two identities relate across graphs."""
 

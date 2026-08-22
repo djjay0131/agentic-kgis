@@ -41,9 +41,12 @@ from kg_contracts._ulid import new_ulid
 from kg_contracts.candidates import CandidateScores
 from kg_contracts.derivation import Derivation
 from kg_contracts.evidence import EvidenceRef, Provenance, ValidPeriod
-from kg_contracts.identity import EntityRef, is_identity_id
-
-_ENTITY_TYPE_PATTERN = r"^[A-Z][A-Za-z0-9]*$"
+from kg_contracts.identity import (
+    _ENTITY_TYPE_PATTERN,
+    EntityRef,
+    check_aliases_match_entity_type,
+    is_identity_id,
+)
 
 
 class CurationStatus(StrEnum):
@@ -82,14 +85,7 @@ class CanonicalEntity(BaseModel):
     def _check_identity_and_aliases(self) -> "CanonicalEntity":
         if not is_identity_id(self.identity_id):
             raise ValueError(f"identity_id is not a valid identity id: {self.identity_id!r}")
-        if not self.aliases:
-            raise ValueError("aliases must be non-empty: an identity is made of its aliases")
-        for alias in self.aliases:
-            if alias.entity_type != self.entity_type:
-                raise ValueError(
-                    f"alias entity_type {alias.entity_type!r} does not match "
-                    f"entity entity_type {self.entity_type!r}"
-                )
+        check_aliases_match_entity_type(self.aliases, self.entity_type, owner_noun="entity")
         return self
 
 
