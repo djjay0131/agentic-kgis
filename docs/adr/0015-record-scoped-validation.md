@@ -1,6 +1,6 @@
-# ADR candidate: Record-scoped validation has no contract type
+# ADR-0015: Record-scoped validation has no contract type
 
-Status: Proposed (candidate)
+Status: Accepted (promoted from ADR candidate 2026-08-22)
 Date: 2026-07-14
 Raised by: Sprint 1 — Core Ingestion Engine (kgis)
 

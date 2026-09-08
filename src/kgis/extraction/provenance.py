@@ -65,7 +65,7 @@ def build_chunk_evidence(
 
     `provenance` is where the model and prompt version are recorded — the
     envelope has no field for them, so the citing candidate carries them
-    transitively through this evidence (see the ADR candidate)."""
+    transitively through this evidence (see ADR-0023)."""
     provenance = Provenance(
         source=chunk.locator,
         source_ref=chunk.fragment,

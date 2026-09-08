@@ -21,7 +21,7 @@ Versions are captured explicitly (`model_id`, `model_version`,
 `extractor_version`, `prompt_version`) because re-extraction identity and
 audit both depend on knowing *which* extractor and *which* model produced a
 candidate. Where those land on the emitted candidate is discussed in
-`extractor.py` and the ADR candidate filed alongside this stream.
+`extractor.py` and ADR-0023.
 """
 
 from __future__ import annotations
@@ -79,5 +79,5 @@ class ExtractorConfig:
         Encodes the extractor id and version alongside the base producer
         (`kgis.extraction:player@2`) so the candidate itself names which
         extractor made it — the envelope has no dedicated field for it (see
-        the ADR candidate)."""
+        ADR-0023)."""
         return f"{base}:{self.extractor_id}@{self.extractor_version}"

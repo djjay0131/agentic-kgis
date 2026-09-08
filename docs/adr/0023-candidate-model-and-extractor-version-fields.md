@@ -1,6 +1,6 @@
-# ADR candidate: First-class model / extractor-version fields on the candidate envelope
+# ADR-0023: First-class model / extractor-version fields on the candidate envelope
 
-Status: Proposed (candidate)
+Status: Accepted (promoted from ADR candidate 2026-08-22)
 Date: 2026-08-21
 Raised by: Plan 4 — LLM document extraction (kgis)
 

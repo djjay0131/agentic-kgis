@@ -1,6 +1,6 @@
-# ADR candidate: three fail-closed narrowings of the frozen `kg_contracts`
+# ADR-0021: three fail-closed narrowings of the frozen `kg_contracts`
 
-Status: Proposed (candidate)
+Status: Accepted (promoted from ADR candidate 2026-08-22)
 Date: 2026-08-21
 Raised by: Contracts hygiene — Issue #8 safe subset (PR #20)
 

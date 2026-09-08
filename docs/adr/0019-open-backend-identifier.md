@@ -1,6 +1,6 @@
-# ADR candidate: `GraphDescriptor.backend` should be an open identifier
+# ADR-0019: `GraphDescriptor.backend` should be an open identifier
 
-Status: Proposed (candidate)
+Status: Accepted (promoted from ADR candidate 2026-08-22)
 Date: 2026-08-21
 Raised by: Plan 7 — Registry / Advisor (kgis)
 
@@ -46,7 +46,7 @@ graph.resolved_backend  # -> "postgres+age" (falls back to the enum when unset)
 `descriptor.backend` still holds a coarse enum bucket to satisfy the contract;
 `RegisteredGraph.resolved_backend` prefers the open identifier when present.
 This is the same extension-attribute mechanism that resolves the attribute
-vocabulary gap (candidate 0004), so both promote cleanly if accepted.
+vocabulary gap (ADR-0018), so both promote cleanly if accepted.
 
 ## Rationale
 

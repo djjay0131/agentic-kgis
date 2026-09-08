@@ -1,6 +1,6 @@
-# ADR candidate: A public deterministic-ID helper on `kg_contracts`
+# ADR-0017: A public deterministic-ID helper on `kg_contracts`
 
-Status: Proposed (candidate)
+Status: Accepted (promoted from ADR candidate 2026-08-22)
 Date: 2026-07-14
 Raised by: Sprint 1 — Core Ingestion Engine (kgis)
 

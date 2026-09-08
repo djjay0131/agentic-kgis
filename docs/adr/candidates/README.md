@@ -1,54 +1,29 @@
-# ADR candidates
+# ADR candidates — all promoted
 
-Proposed ADRs surfaced during implementation, awaiting owner review and
-promotion to a numbered, accepted ADR in `docs/adr/`.
+As of **2026-08-22**, every ADR candidate that was in this directory has been
+reviewed by the architecture owner and **promoted to a numbered, accepted ADR**
+in `docs/adr/`. This directory is retained only for the mapping below and for
+old links; a new architectural decision goes straight into `docs/adr/`, or is
+filed here first when it needs owner review before acceptance.
 
-Per `CONTRIBUTING.md` and the Sprint 1 brief: when implementation reveals an
-architectural weakness, the implementer **documents it, files an ADR
-candidate, and continues** — the implementer does not redesign the frozen
-contracts. Everything here is a proposal for the architecture owner to accept,
-amend, or reject; none of it has been actioned against `kg_contracts`.
+| Former candidate | Promoted to |
+|---|---|
+| 0001 record-scoped-validation | [ADR-0015](../0015-record-scoped-validation.md) |
+| 0002 source-adapter-composition | [ADR-0016](../0016-source-adapter-composition.md) |
+| 0003-A public-deterministic-id-helper | [ADR-0017](../0017-public-deterministic-id-helper.md) |
+| 0004 graph-descriptor-attribute-vocabulary | [ADR-0018](../0018-graph-descriptor-attribute-vocabulary.md) |
+| 0005 open-backend-identifier | [ADR-0019](../0019-open-backend-identifier.md) |
+| 0006 recommendation-outcomes-and-honest-null | [ADR-0020](../0020-recommendation-outcomes-and-honest-null.md) |
+| 0007 fail-closed-contract-narrowings | [ADR-0021](../0021-fail-closed-contract-narrowings.md) |
+| 0008 structured-snapshot-version-provenance | [ADR-0022](../0022-structured-snapshot-version-provenance.md) |
+| 0009 candidate-model-and-extractor-version-fields | [ADR-0023](../0023-candidate-model-and-extractor-version-fields.md) |
 
-These arose from building `kgis` (structured ingestion) against the merged
-`kg_contracts` v2. None of them blocked Sprint 1 — each has an in-code
-workaround that respects the current contract — but each names a seam that a
-future plan will hit again.
+None of these was actioned against the frozen `kg_contracts` at promotion time —
+each accepted ADR records the in-code workaround that shipped and defers any
+contract change. See each ADR body and the `docs/adr/README.md` index for the
+per-ADR status, including ADR-0021's pending external-adapter confirmation
+(no external/KGCS `GraphMutationStore` may emit a reasonless `committed=False`).
 
-| Candidate | Weakness | Sprint 1 workaround |
-|---|---|---|
-| [0001](0001-record-scoped-validation.md) | `ValidationDecision` is keyed on `candidate_id`, but records are rejected before candidates exist | Two-tier validation: record-tier `RecordValidation` (kgis) + candidate-tier `ValidationDecision` (contract) |
-| [0002](0002-source-adapter-composition.md) | `Source.fetch()` yields `Candidate`, so the read/normalize/validate/build stages cannot sit upstream of a `Source` | Stages compose *inward*; `IngestPipeline` is the composition, `Source` conformance deferred |
-| [0003-A](0003-a-public-deterministic-id-helper.md) | No public deterministic-ID helper on `kg_contracts` (the Crockford encoder is private) | Reimplemented Crockford encoder in `kgis.ids`, guarded by a drift test |
-| [0004](0004-graph-descriptor-attribute-vocabulary.md) | `GraphDescriptor` declares node and edge types but no attribute vocabulary | Ontology attributes left unconstrained when read from a descriptor; Plan 7 registry carries them as extension attributes |
-| [0005](0005-open-backend-identifier.md) | `Backend` is a closed enum (Spanner/Neo4j/Memory), excluding Postgres/AGE-class backends (Issue #2 item 3) | Registry stores an open `backend.open_id` extension attribute; `resolved_backend` prefers it |
-| [0006](0006-recommendation-outcomes-and-honest-null.md) | `Recommendation` is binary (extend/create) with no honest null, but ADR-0005 (amended) has four outcomes + insufficient-information | `kgis.registry.AdvisorRecommendation` models all four outcomes + the null; `.to_contract()` projects down (and returns `None` for the null) |
-| [0007](0007-fail-closed-contract-narrowings.md) | Three Issue #8 validators narrow the accepted domain of the frozen `kg_contracts` (reasoned `CommitResult`, bounded `ConfidencePolicy` thresholds, non-empty `VersionChange.from_version`) | Implemented in PR #20 as owner-requested fail-closed hardening; owner to confirm no external `GraphMutationStore` returns a reasonless `committed=False` before promotion |
-| [0008](0008-structured-snapshot-version-provenance.md) | No first-class field records a candidate's source snapshot version/cursor (structured sync) | Snapshot version encoded in `SourceCoordinates.locator` (toggleable), also exposed on the reader |
-| [0009](0009-candidate-model-and-extractor-version-fields.md) | `CandidateEnvelope` has no first-class model / extractor-version / prompt-version fields, which LLM extraction provenance needs | Encode extractor id+version in `producer`, model on `representations["source_passage"].model`, full model+prompt versions on cited `Evidence.provenance` |
-
-> Note: 0003-A and 0004 were split from a single joint candidate (originally
-> `0003-contract-gaps-ulid-and-attributes`) per the PR #9 review — the ID
-> helper is a small additive change, the attribute vocabulary needs
-> registry/advisor review, so they are dispositioned separately.
-
-## Status (2026-08-21) — backlog execution adds 0005–0009
-
-The remaining KGIS v1 backlog was executed as six independently reviewed,
-owner-ready PRs (see `llm/memory_bank/activeContext.md`). Those branches carry
-five new ADR candidates and one amendment; they land in this directory when the
-PRs merge. **The full open set awaiting owner promotion is 0001, 0002, 0003-A,
-0004, 0005, 0006, 0007, 0008, 0009** — none has been actioned against
-`kg_contracts`.
-
-| Candidate | Weakness / decision | Arrives with |
-|---|---|---|
-| 0004 (amend) | `GraphDescriptor` attribute vocabulary — amended for the persistent registry + extension-attribute sidecar | PR #18 |
-| 0005 | Open backend-id for the registry (backend identity not pinned to one store) | PR #18 |
-| 0006 | Advisor recommendation outcomes + `INSUFFICIENT_INFORMATION` honest-null | PR #18 |
-| 0007 | Fail-closed contract narrowings (`CommitResult`/`VersionChange`/`ConfidencePolicy` reject reasonless failure) | PR #20 |
-| 0008 | Snapshot-version provenance for structured sync | PR #21 |
-| 0009 | Model/extractor version fields for LLM extraction | PR #22 |
-
-Promoting 0007 is gated on confirming no external/KGCS `GraphMutationStore`
-adapter emits a reasonless `committed=False` (see owner decision (b) in
-`activeContext.md`). This steward PR does **not** renumber or promote anything.
+> Historical note: 0003-A and 0004 (now ADR-0017 and ADR-0018) were split from
+> a single joint candidate (`0003-contract-gaps-ulid-and-attributes`) per the
+> PR #9 review.

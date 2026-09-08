@@ -25,7 +25,7 @@ So validation happens at two tiers, each with the type that actually fits:
    about the candidate, not about the row.
 
 That split is an architectural finding, not a workaround; it is written up as
-an ADR candidate (`docs/adr/candidates/0001-record-scoped-validation.md`).
+an accepted ADR (`docs/adr/0015-record-scoped-validation.md`).
 The contract is not wrong — it is a *ledger-side* contract, and the ledger
 only ever sees candidates. The gap is simply that ingestion validates
 something the ledger never sees.
