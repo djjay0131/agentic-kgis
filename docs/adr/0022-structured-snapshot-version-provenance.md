@@ -1,6 +1,6 @@
-# ADR candidate: A candidate has no first-class home for its source snapshot version
+# ADR-0022: A candidate has no first-class home for its source snapshot version
 
-Status: Proposed (candidate)
+Status: Accepted (promoted from ADR candidate 2026-08-22)
 Date: 2026-08-21
 Raised by: Plan 4 — Structured Sync (kgis)
 

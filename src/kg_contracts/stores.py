@@ -343,8 +343,8 @@ class CommitResult(BaseModel):
     def _check_committed_requires_new_epoch(self) -> "CommitResult":
         if self.committed and self.new_epoch is None:
             raise ValueError("committed=True requires new_epoch")
-        # Fail-closed NARROWING of the frozen contract (issue #8; ADR candidate
-        # 0007): a non-commit must name why. Without this a `committed=False`
+        # Fail-closed NARROWING of the frozen contract (issue #8;
+        # ADR-0021): a non-commit must name why. Without this a `committed=False`
         # result with no `error` and no `failed_preconditions` is a silent
         # failure the caller cannot act on — neither a stale snapshot to
         # re-evaluate nor an error to surface. NB: external GraphMutationStore

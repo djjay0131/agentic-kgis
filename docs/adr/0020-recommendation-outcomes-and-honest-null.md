@@ -1,6 +1,6 @@
-# ADR candidate: `Recommendation` should carry four outcomes and an honest null
+# ADR-0020: `Recommendation` should carry four outcomes and an honest null
 
-Status: Proposed (candidate)
+Status: Accepted (promoted from ADR candidate 2026-08-22)
 Date: 2026-08-21
 Raised by: Plan 7 — Registry / Advisor (kgis)
 

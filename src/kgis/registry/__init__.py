@@ -11,7 +11,7 @@ The frozen `kg_contracts.registry` module owns the `GraphDescriptor`,
 `RegistryStore`, and `Recommendation` shapes; this package implements them and
 carries — behind those contracts — the richer factors, outcomes, extension
 attributes, and decision corpus the amended ADR-0005 and spec §8 ask for. The
-contract gaps are filed as ADR candidates 0004/0005/0006.
+contract gaps are filed as ADR-0018/ADR-0019/ADR-0020.
 """
 
 from kgis.registry.advisor import GraphAdvisor

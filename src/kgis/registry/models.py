@@ -17,9 +17,9 @@ None of that fits inside the frozen contract without editing it, so the
 richer decision is modelled here in `kgis` and projected *down* to the
 contract `Recommendation` via `AdvisorRecommendation.to_contract()` (which
 returns ``None`` for the insufficient-information case the contract cannot
-represent). The contract gaps this reveals are filed as ADR candidates
-0005 (open backend identifier) and 0006 (four outcomes + insufficient
-information); see also candidate 0004 (attribute vocabulary), resolved here
+represent). The contract gaps this reveals are filed as ADRs
+ADR-0019 (open backend identifier) and ADR-0020 (four outcomes + insufficient
+information); see also ADR-0018 (attribute vocabulary), resolved here
 through registry extension attributes rather than a contract change.
 """
 

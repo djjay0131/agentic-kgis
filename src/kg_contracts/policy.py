@@ -84,8 +84,8 @@ class ConfidencePolicy(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     # Every threshold is a probability/score in [0, 1]. The per-field ge/le
-    # bounds are a fail-closed NARROWING of the frozen contract (issue #8; ADR
-    # candidate 0007): they reject a nonsense threshold (e.g. 1.5) at
+    # bounds are a fail-closed NARROWING of the frozen contract (issue #8;
+    # ADR-0021): they reject a nonsense threshold (e.g. 1.5) at
     # construction rather than letting it silently distort routing. Since
     # CandidateScores fields are already bounded [0, 1], an out-of-range
     # threshold is meaningless. The ordering validator and routing are unchanged.

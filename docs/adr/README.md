@@ -11,6 +11,14 @@ rule. ADRs 0006–0010 record the decisions from the approved disposition of
 the external design review (PR #1, 2026-07-10); spec v2 is the companion
 rewrite.
 
+ADRs 0015–0023 were promoted from ADR candidates on 2026-08-22 (surfaced
+during Sprint 1 and the remaining-backlog execution). Each records a decision
+the shipped implementation already reflects through an in-code workaround that
+respects the frozen `kg_contracts`; where an ADR proposes a future contract
+change, that change remains deferred as the ADR states. The former candidate
+files under `candidates/` are mapped to their ADR numbers in
+`candidates/README.md`.
+
 ## Index
 
 | ADR | Title | Status |
@@ -29,3 +37,12 @@ rewrite.
 | [0012](0012-candidate-ledger-persistence.md) | Candidate ledger persistence via stdlib sqlite3 | Accepted |
 | [0013](0013-ledger-revoke-and-erasure.md) | Ledger revoke and erasure as row-governance, orthogonal to ProcessingState | Accepted |
 | [0014](0014-identity-mode-and-consumer-profile.md) | Identity mode and consumer profile as the adoption-gating surface | Accepted |
+| [0015](0015-record-scoped-validation.md) | Record-scoped validation has no contract type (two-tier validation) | Accepted (promoted from candidate 2026-08-22) |
+| [0016](0016-source-adapter-composition.md) | `Source` yields candidates, so ingestion stages compose inward | Accepted (promoted from candidate 2026-08-22) |
+| [0017](0017-public-deterministic-id-helper.md) | A public deterministic-ID helper on `kg_contracts` (kgis re-implements, drift-tested) | Accepted (promoted from candidate 2026-08-22) |
+| [0018](0018-graph-descriptor-attribute-vocabulary.md) | `GraphDescriptor` should declare an attribute vocabulary (registry carries extension attributes) | Accepted (promoted from candidate 2026-08-22) |
+| [0019](0019-open-backend-identifier.md) | `GraphDescriptor.backend` should be an open identifier | Accepted (promoted from candidate 2026-08-22) |
+| [0020](0020-recommendation-outcomes-and-honest-null.md) | `Recommendation` should carry four outcomes and an honest null | Accepted (promoted from candidate 2026-08-22) |
+| [0021](0021-fail-closed-contract-narrowings.md) | Three fail-closed narrowings of the frozen `kg_contracts` | Accepted (promoted from candidate 2026-08-22; owner to confirm no external `GraphMutationStore` emits a reasonless `committed=False`) |
+| [0022](0022-structured-snapshot-version-provenance.md) | A candidate has no first-class home for its source snapshot version | Accepted (promoted from candidate 2026-08-22) |
+| [0023](0023-candidate-model-and-extractor-version-fields.md) | First-class model / extractor-version fields on the candidate envelope | Accepted (promoted from candidate 2026-08-22) |

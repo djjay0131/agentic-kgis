@@ -1,13 +1,13 @@
-# ADR candidate: `GraphDescriptor` should declare an attribute vocabulary
+# ADR-0018: `GraphDescriptor` should declare an attribute vocabulary
 
-Status: Proposed (candidate)
+Status: Accepted (promoted from ADR candidate 2026-08-22)
 Date: 2026-07-14
 Raised by: Sprint 1 — Core Ingestion Engine (kgis)
 
 > Split note: this candidate was originally filed jointly with the public
 > deterministic-ID helper as `0003-contract-gaps-ulid-and-attributes`. Per the
 > PR #9 review, the two are unrelated decisions and were split. The ID-helper
-> half is now [0003-A](0003-a-public-deterministic-id-helper.md). This half
+> half is now [ADR-0017](0017-public-deterministic-id-helper.md). This half
 > needs registry/advisor review because it changes what `GraphDescriptor`
 > promises, so it is filed on its own.
 
