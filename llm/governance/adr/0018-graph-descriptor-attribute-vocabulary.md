@@ -94,7 +94,7 @@ callers that read a bare descriptor; a caller that reads the registry's
 extension attributes can now enforce attributes.
 
 The same extension-attribute mechanism carries the open backend identifier —
-see candidate [0005](0005-open-backend-identifier.md).
+see candidate 0005, promoted as [ADR-0019](0019-open-backend-identifier.md).
 
 ## Related Documents
 

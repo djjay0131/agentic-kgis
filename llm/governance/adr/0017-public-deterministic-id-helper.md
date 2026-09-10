@@ -9,7 +9,8 @@ Raised by: Sprint 1 — Core Ingestion Engine (kgis)
 > Per the PR #9 review, the two are unrelated decisions with different blast
 > radii — a small additive helper versus a registry/advisor-governed change to
 > what a graph promises — and were split so each can be dispositioned on its own.
-> The attribute-vocabulary half is now [0004](0004-graph-descriptor-attribute-vocabulary.md).
+> The attribute-vocabulary half was filed as candidate 0004 and promoted as
+> [ADR-0018](0018-graph-descriptor-attribute-vocabulary.md).
 
 ## Context
 
