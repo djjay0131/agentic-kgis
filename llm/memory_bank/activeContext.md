@@ -1,5 +1,35 @@
 # Active Context — agentic-kgis
 
+Update 2026-09-10: **Migrated to the agentic-governance v0.5 two-plane
+layout** (PR #27, issue #26). The control plane moved out of `docs/` into
+`llm/`, by `git mv` so history follows: the governance delta to
+`llm/governance/governance-delta.md`, the 24 ADRs + index + `candidates/` to
+`llm/governance/adr/`, the Sprint 1 report to `llm/sprints/`, the design spec
+to `llm/specs/2026-07-09-kgis-kgcs-design.md`, and the three plans to
+`llm/plans/`. `docs/superpowers/` was then deleted — it is the vendor default
+agentic-governance ADR-0001 exists to eliminate. `docs/` now holds only
+data-plane material (`docs/kgis-adopter-notes.md`, `docs/ai/`). The delta pin
+is `v0.5`, it declares a `## Repository Layout` block binding seven slots, and
+its L0 allowlist is rebound to the new paths. The two-plane routing rule is
+installed in `CLAUDE.md` and `AGENTS.md`, which is what stops `superpowers`
+recreating `docs/superpowers/`.
+
+**Reading older entries in this file:** paths written before this date are left
+exactly as they were, because they record where things were at the time. Map
+them forward with the table above — `docs/superpowers/specs/` → `llm/specs/`,
+`docs/superpowers/plans/` → `llm/plans/`, `docs/adr/` →
+`llm/governance/adr/`, `docs/sprints/` → `llm/sprints/`,
+`docs/governance-delta.md` → `llm/governance/governance-delta.md`. The same
+applies to `projectbrief.md`'s `Authority:`/`Governance:` lines and to the
+three relocated plans, whose bodies contain `git add docs/adr/...` transcripts
+of commits already made.
+
+Verification at migration:
+`node ~/code/agentic-governance/plugin/scripts/governance-checks.mjs --layout`
+→ 4 of 4 passed (`layout` a real PASS, not a SKIP); 748 tests, ruff and
+`mypy --strict` green. CI now runs that same command in a `governance` job with
+agentic-governance pinned by SHA.
+
 Update 2026-08-21: **Remaining KGIS v1 backlog executed — six independently
 reviewed, owner-ready PRs.** An orchestrated multi-agent run took the rest of
 the KGIS v1 backlog through the full governance loop (implementer → independent
