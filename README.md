@@ -11,7 +11,7 @@ Knowledge Graph Ingestion Service. Ships three packages (ADR-0002 as amended):
 - **kg_eval** — evaluation harness with honest-null discipline (ADR-0009;
   Plan 6).
 
-Design: `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` (v2)
+Design: `llm/specs/2026-07-09-kgis-kgcs-design.md` (v2)
 Companion repo: `agentic-kgcs` (curation service; depends on kg_contracts).
 
 ## Dev setup

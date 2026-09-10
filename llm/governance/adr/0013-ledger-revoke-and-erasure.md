@@ -205,7 +205,7 @@ provable after the fact (spec's append-only audit stream, Task Group 3).
 - ADR-0012 (candidate ledger persistence via stdlib sqlite3)
 - ADR-0014 (identity mode + consumer profile) — `erase` is gated by
   `ConsumerProfile.erasure_enabled` from that ADR
-- Plan: `docs/superpowers/plans/2026-07-17-plan-2-candidate-ledger-evidence-registry.md`
+- Plan: `llm/plans/2026-07-17-plan-2-candidate-ledger-evidence-registry.md`
   (Task Group 1, Task 10)
 - Implementation: `src/kgis/ledger/store.py` (`revoke`, `erase`, `is_revoked`,
   `is_erased`), `src/kgis/ledger/row.py` (`LedgerRow.is_revoked`,

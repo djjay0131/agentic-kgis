@@ -95,7 +95,7 @@ extraction arms and KGCS resolution arms independently of both.
 
 ## Related Documents
 
-- Spec v2 §10.1: `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md`
+- Spec v2 §10.1: `llm/specs/2026-07-09-kgis-kgcs-design.md`
 - Feedback: `docs/ai/chatgpt-feedback-2026-07.md` (Response 1 §5
   "Evaluation framework", Response 2 §5)
 - Disposition: `docs/ai/chatgpt-feedback-disposition.md` (A13, R2; owner

@@ -110,9 +110,9 @@ the contracts layer exists to prevent.
 
 ## Related Documents
 
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §7.2
+- `llm/specs/2026-07-09-kgis-kgcs-design.md` §7.2
 - `src/kgis/validate.py` (the two-tier implementation)
-- `docs/adr/0006-three-store-separation.md` (why the ledger is candidate-only)
+- `llm/governance/adr/0006-three-store-separation.md` (why the ledger is candidate-only)
 
 ## Supersedes
 

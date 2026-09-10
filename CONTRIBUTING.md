@@ -4,22 +4,22 @@ Status: Active
 Last updated: 2026-07-16
 
 This project follows [agentic-governance](https://github.com/djjay0131/agentic-governance)
-(see `docs/governance-delta.md` for project specifics).
+(see `llm/governance/governance-delta.md` for project specifics).
 
 ## Before You Start
 
 1. `llm/memory_bank/activeContext.md`
-2. `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` (design authority)
-3. `docs/governance-delta.md`
-4. agentic-governance: `docs/architecture-governance.md`,
-   `docs/project-operating-system.md`
+2. `llm/specs/2026-07-09-kgis-kgcs-design.md` (design authority)
+3. `llm/governance/governance-delta.md`
+4. agentic-governance: `llm/governance/architecture-governance.md`,
+   `llm/governance/project-operating-system.md`
 
 ## Contribution Rules
 
 - No direct commits to `main`. Issue → Branch → Draft PR → Review → Merge.
 - Branch prefixes: `docs/`, `architecture/`, `feature/`, `research/`,
   `spike/`, `governance/`, ...
-- ADRs for durable decisions (`docs/adr/`, use `0000-template.md`).
+- ADRs for durable decisions (`llm/governance/adr/`, use `0000-template.md`).
   System-level ADRs (spanning kgis + kgcs) live here.
 - Update `llm/memory_bank/` when project context changes.
 - AI agents: follow assigned scope, identify ADR candidates, never merge
@@ -61,5 +61,5 @@ owner.
 
 ## Definition of Done
 
-See agentic-governance `docs/definition-of-done.md`. For this repo
+See agentic-governance `llm/governance/definition-of-done.md`. For this repo
 additionally: `pytest`, `ruff check src tests`, and `mypy src` green.

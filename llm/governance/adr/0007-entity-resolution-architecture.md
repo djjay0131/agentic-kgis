@@ -119,7 +119,7 @@ benchmarked as the stage-4 matcher, not the architecture.
 
 ## Related Documents
 
-- Spec v2 §7.4: `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md`
+- Spec v2 §7.4: `llm/specs/2026-07-09-kgis-kgcs-design.md`
 - Feedback: `docs/ai/chatgpt-feedback-2026-07.md` (Response 1 §3, Response 2 §7)
 - Disposition: `docs/ai/chatgpt-feedback-disposition.md` (A5, A6, A22)
 

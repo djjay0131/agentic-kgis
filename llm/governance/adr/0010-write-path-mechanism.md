@@ -116,7 +116,7 @@ the executor stateless.
 
 ## Related Documents
 
-- Spec v2 §5.6, §5.7, §7.1, §7.2: `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md`
+- Spec v2 §5.6, §5.7, §7.1, §7.2: `llm/specs/2026-07-09-kgis-kgcs-design.md`
 - Feedback: `docs/ai/chatgpt-feedback-2026-07.md` (Response 1 §2, Response 2 §6, §9)
 - Disposition: `docs/ai/chatgpt-feedback-disposition.md` (A9, A10, A12)
 

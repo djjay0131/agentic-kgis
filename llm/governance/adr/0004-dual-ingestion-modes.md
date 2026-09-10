@@ -81,7 +81,7 @@ Per the approved disposition of external review PR #1 (A2, A8):
 
 ## Related Documents
 
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §2.2, §5.2, §5.5, §6 (v2)
+- `llm/specs/2026-07-09-kgis-kgcs-design.md` §2.2, §5.2, §5.5, §6 (v2)
 - `docs/ai/chatgpt-feedback-2026-07.md` (Response 2 §3, §8)
 - `docs/ai/chatgpt-feedback-disposition.md` (A2, A8; Consequences §3)
 - PR #1 (external design review capture + disposition)

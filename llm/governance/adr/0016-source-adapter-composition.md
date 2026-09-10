@@ -111,7 +111,7 @@ it discards per-stage reporting and dry-run today. Deferred with streaming.
 
 ## Related Documents
 
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §5, §6 (module list)
+- `llm/specs/2026-07-09-kgis-kgcs-design.md` §5, §6 (module list)
 - `src/kgis/pipeline.py`
 
 ## Supersedes

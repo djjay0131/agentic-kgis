@@ -26,7 +26,7 @@ ULID, so a deterministic ID is drop-in wherever a ULID-shaped one is
 expected. The encoder is reimplemented here rather than imported from
 `kg_contracts._ulid`: that module is private to its package, and reaching
 into another package's private module to avoid six lines is the worse
-trade. See `docs/adr/0017-public-deterministic-id-helper.md` —
+trade. See `llm/governance/adr/0017-public-deterministic-id-helper.md` —
 a public ULID helper on `kg_contracts`
 would remove this duplication.
 """

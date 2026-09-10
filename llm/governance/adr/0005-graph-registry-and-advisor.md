@@ -90,7 +90,7 @@ are unchanged. The advisor's decision model is upgraded:
 
 ## Related Documents
 
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §8 (v2)
+- `llm/specs/2026-07-09-kgis-kgcs-design.md` §8 (v2)
 - construction-platform ADR-012 (infrastructure layer)
 - `docs/ai/chatgpt-feedback-2026-07.md` (Response 1 §4, Response 2 §10)
 - `docs/ai/chatgpt-feedback-disposition.md` (A15, D3)

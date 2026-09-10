@@ -55,7 +55,7 @@ class Ontology(BaseModel):
         `GraphDescriptor` declares node and edge types but has no attribute
         vocabulary, so attributes come back unconstrained. That is a real gap
         in the registry contract, not an oversight here — see
-        `docs/adr/0018-graph-descriptor-attribute-vocabulary.md`.
+        `llm/governance/adr/0018-graph-descriptor-attribute-vocabulary.md`.
         """
         return Ontology(
             version=descriptor.ontology_version or "unversioned",
