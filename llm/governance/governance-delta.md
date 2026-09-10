@@ -7,7 +7,7 @@ allowlist and governance check command rebound to the declared paths. Prior
 revision 2026-07-10: principles 2, 3, 4, 6 reworded; adopter ordering and
 milestone labels remapped — per the approved disposition of external review
 PR #1, Consequences §2.)
-Governance: agentic-governance v0.5 (canonical `VERSION` 0.5.2 at migration)
+Governance: agentic-governance v0.6 (canonical `VERSION` 0.6.0)
 
 This file localizes [agentic-governance](https://github.com/djjay0131/agentic-governance)
 for this project.
