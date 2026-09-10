@@ -70,7 +70,7 @@ no code vendoring (owner decision, 2026-07-10).
 
 ## Related Documents
 
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §2.5, §4, §5, §10.1 (v2)
+- `llm/specs/2026-07-09-kgis-kgcs-design.md` §2.5, §4, §5, §10.1 (v2)
 - `docs/ai/chatgpt-feedback-2026-07.md` (Response 2 §5, §12)
 - `docs/ai/chatgpt-feedback-disposition.md` (R2, A13, A18/Phase 0)
 - PR #1 (external design review capture + disposition)

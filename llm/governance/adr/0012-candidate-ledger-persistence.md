@@ -132,10 +132,10 @@ revisiting this decision.
 ## Related Documents
 
 - Spec v2 §3.2, §5.4, §5.7 (candidate ledger, bitemporal rows, capability-
-  declared temporal query): `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md`
+  declared temporal query): `llm/specs/2026-07-09-kgis-kgcs-design.md`
 - ADR-0006 (three-store separation), ADR-0011 (canonical reads are
   canonical-only; ledger read surface)
-- Plan: `docs/superpowers/plans/2026-07-17-plan-2-candidate-ledger-evidence-registry.md`
+- Plan: `llm/plans/2026-07-17-plan-2-candidate-ledger-evidence-registry.md`
   (Task Group 1, Task 4)
 - Implementation: `src/kgis/ledger/schema.py`
 

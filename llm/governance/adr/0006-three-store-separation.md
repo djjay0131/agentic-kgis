@@ -106,7 +106,7 @@ completeness — the ledger model is the opposite discipline.
 ## Related Documents
 
 - Spec v2 §3 (three-store separation, epochs, GraphReadOptions), §7.7:
-  `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md`
+  `llm/specs/2026-07-09-kgis-kgcs-design.md`
 - Feedback: `docs/ai/chatgpt-feedback-2026-07.md` (Response 1 §2, Response 2 §6)
 - Disposition: `docs/ai/chatgpt-feedback-disposition.md` (A1, A22 invariant)
 

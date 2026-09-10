@@ -95,8 +95,8 @@ Wrong homes: `content_hash` is about the candidate's content changing, and
 
 - `src/kgis/structured/reader.py` (locator workaround)
 - `src/kgis/structured/providers.py` (snapshot version derivation)
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §5.8
-- `docs/adr/0009-kg-eval-and-honest-null.md` (plan/run honesty)
+- `llm/specs/2026-07-09-kgis-kgcs-design.md` §5.8
+- `llm/governance/adr/0009-kg-eval-and-honest-null.md` (plan/run honesty)
 
 ## Supersedes
 

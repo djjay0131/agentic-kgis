@@ -108,7 +108,7 @@ implementation; the full ledger store remains Plan 2.
 ## Related Documents
 
 - Spec v2 §3.3, §5.6 (GraphReadOptions corrected; ledger read surface):
-  `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md`
+  `llm/specs/2026-07-09-kgis-kgcs-design.md`
 - Implementation: `src/kg_contracts/stores.py` (`GraphReadOptions`,
   `LedgerReader`, `LedgerReadOptions`, `LedgerEntry`),
   `src/kg_contracts/testing/memory.py` (`MemoryCandidateSink` as `LedgerReader`),

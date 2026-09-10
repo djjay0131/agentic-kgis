@@ -2,9 +2,10 @@
 
 As of **2026-08-22**, every ADR candidate that was in this directory has been
 reviewed by the architecture owner and **promoted to a numbered, accepted ADR**
-in `docs/adr/`. This directory is retained only for the mapping below and for
-old links; a new architectural decision goes straight into `docs/adr/`, or is
-filed here first when it needs owner review before acceptance.
+in `llm/governance/adr/`. This directory is retained only for the mapping below
+and for old links; a new architectural decision goes straight into
+`llm/governance/adr/`, or is filed here first when it needs owner review before
+acceptance.
 
 | Former candidate | Promoted to |
 |---|---|
@@ -20,8 +21,8 @@ filed here first when it needs owner review before acceptance.
 
 None of these was actioned against the frozen `kg_contracts` at promotion time —
 each accepted ADR records the in-code workaround that shipped and defers any
-contract change. See each ADR body and the `docs/adr/README.md` index for the
-per-ADR status, including ADR-0021's pending external-adapter confirmation
+contract change. See each ADR body and the `llm/governance/adr/README.md` index
+for the per-ADR status, including ADR-0021's pending external-adapter confirmation
 (no external/KGCS `GraphMutationStore` may emit a reasonless `committed=False`).
 
 > Historical note: 0003-A and 0004 (now ADR-0017 and ADR-0018) were split from

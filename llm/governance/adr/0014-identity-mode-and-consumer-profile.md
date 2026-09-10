@@ -152,7 +152,7 @@ is really a per-application governance policy object.
   profile's `IdentityResolver` seam defers to
 - ADR-0013 (ledger revoke and erasure) — `erase()` is gated by
   `ConsumerProfile.erasure_enabled` introduced here
-- Plan: `docs/superpowers/plans/2026-07-17-plan-2-candidate-ledger-evidence-registry.md`
+- Plan: `llm/plans/2026-07-17-plan-2-candidate-ledger-evidence-registry.md`
   (Task Group 1, Task 10)
 - Implementation: `src/kgis/ledger/config.py` (`IdentityMode`,
   `ConsumerProfile`, `BASEBALL_AI_PROFILE`, `IdentityResolver`),

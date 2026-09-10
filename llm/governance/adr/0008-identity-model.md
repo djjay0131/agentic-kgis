@@ -92,7 +92,7 @@ key; a wrong-key repair still rewrites identity and every edge.
 
 ## Related Documents
 
-- Spec v2 §5.1: `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md`
+- Spec v2 §5.1: `llm/specs/2026-07-09-kgis-kgcs-design.md`
 - Feedback: `docs/ai/chatgpt-feedback-2026-07.md` (Response 1 §2 "Canonical
   ID repair risk", Response 2 §1)
 - Disposition: `docs/ai/chatgpt-feedback-disposition.md` (A4, A14)

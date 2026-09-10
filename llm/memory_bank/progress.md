@@ -107,6 +107,19 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   0009 join the existing 0001, 0002, 0003-A, 0004 — all still candidates
   awaiting owner promotion. PRs are owner-ready but unmerged; none self-merged.
 
+- 2026-09-10: **Governance migrated to agentic-governance v0.5 (two-plane
+  layout)** — PR #27, issue #26. Control plane relocated from `docs/` to `llm/`
+  by `git mv` (delta → `llm/governance/`, ADRs → `llm/governance/adr/`, sprint
+  report → `llm/sprints/`, design spec → `llm/specs/`, plans → `llm/plans/`);
+  `docs/superpowers/` deleted per agentic-governance ADR-0001. Delta pinned to
+  v0.5 with a `## Repository Layout` block and a rebound L0 allowlist; routing
+  rule installed in `CLAUDE.md`/`AGENTS.md`; CI now runs the governance check
+  against a SHA-pinned canon. Two pre-existing broken ADR links and 15 rows of
+  ADR-index Status drift fixed — both had been hidden behind an ADR-directory
+  path that did not exist, so `adr-index` had been passing while checking zero
+  ADRs. Entries above this line keep their pre-migration paths on purpose; see
+  `activeContext.md` 2026-09-10 for the forward map.
+
 Works now: `kg_contracts` v2; both ingestion modes (deterministic structured
 sync + LLM document extraction) on a persistent candidate ledger + evidence
 registry; kg_eval v1 harness (P/R/F1, span/reference validity, hallucination/

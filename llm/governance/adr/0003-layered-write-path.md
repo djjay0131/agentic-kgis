@@ -66,7 +66,7 @@ mode of the agentic-tskg 0/18 post-mortem.
 
 ## Related Documents
 
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §3, §7
+- `llm/specs/2026-07-09-kgis-kgcs-design.md` §3, §7
 - `docs/ai/chatgpt-feedback-disposition.md` (A1, A5, A6, A8, A9, A10; Consequences §3)
 
 ## Supersedes

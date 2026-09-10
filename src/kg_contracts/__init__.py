@@ -1,5 +1,5 @@
 """kg_contracts: the shared ports/contracts layer for the KGIS/KGCS spec
-(docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md, v2), version
+(llm/specs/2026-07-09-kgis-kgcs-design.md, v2), version
 `CONTRACT_VERSION`.
 
 This module is the stable public import surface. It re-exports the typed

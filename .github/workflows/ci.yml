@@ -12,3 +12,27 @@ jobs:
       - run: ruff check src tests
       - run: mypy src
       - run: pytest -v
+
+  # The governance check command declared in
+  # llm/governance/governance-delta.md §Governance Check Command, run on every
+  # push and PR rather than only at onboarding. agentic-governance is pinned by
+  # commit SHA so the canon cannot change under this repo without a visible
+  # commit here. The two checkouts are siblings, not nested: the checker walks
+  # every .md under its target repo's git toplevel, so the canon tree must sit
+  # outside it.
+  governance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The diff-based checks compare against the base ref.
+          fetch-depth: 0
+          path: repo
+      - uses: actions/checkout@v4
+        with:
+          repository: djjay0131/agentic-governance
+          # agentic-governance v0.5.2 (origin/main at 2026-09-10).
+          ref: 4c4f4170b3f05c172f14651e0fb1c26904cd66e9
+          path: governance-canon
+      - run: node ../governance-canon/plugin/scripts/governance-checks.mjs --layout
+        working-directory: repo

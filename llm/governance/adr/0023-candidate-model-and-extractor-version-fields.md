@@ -93,8 +93,8 @@ recoverable via the evidence round-trip.
 - `src/kgis/extraction/config.py` (`ExtractorConfig.producer`)
 - `src/kgis/extraction/extractor.py` (`source_passage` representation)
 - `src/kgis/extraction/provenance.py` (`build_chunk_evidence`)
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §5.6, §6
-- `docs/adr/0004-dual-ingestion-modes.md`
+- `llm/specs/2026-07-09-kgis-kgcs-design.md` §5.6, §6
+- `llm/governance/adr/0004-dual-ingestion-modes.md`
 
 ## Supersedes
 

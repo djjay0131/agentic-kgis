@@ -57,7 +57,7 @@ the natural evolution path.
 
 ## Related Documents
 
-- `docs/superpowers/specs/2026-07-09-kgis-kgcs-design.md` §2, §3
+- `llm/specs/2026-07-09-kgis-kgcs-design.md` §2, §3
 
 ## Supersedes
 
