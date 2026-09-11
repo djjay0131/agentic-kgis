@@ -31,8 +31,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: djjay0131/agentic-governance
-          # agentic-governance v0.6.1 (tag v0.6.1).
-          ref: 195a23afe7ecc1603b30fbfdd4a70219882b8a24
+          # agentic-governance v0.7.0.
+          ref: 757d4915dba248f341b5c184036ce62eb599538b
           path: governance-canon
       - run: node ../governance-canon/plugin/scripts/governance-checks.mjs --layout
         working-directory: repo

@@ -1,13 +1,16 @@
 # Governance Delta: agentic-kgis
 
 Status: Approved
-Last updated: 2026-09-10 (migrated to the v0.5 two-plane layout: control-plane
+Last updated: 2026-09-10 (canon location declared and the canon citations in
+`CLAUDE.md` and the check command below rebound to it, per agentic-governance
+v0.7.0; the governance plugin registered in `.claude/settings.json`. Earlier
+the same day: migrated to the v0.5 two-plane layout: control-plane
 content relocated from `docs/` to `llm/`, `## Repository Layout` declared, L0
 allowlist and governance check command rebound to the declared paths. Prior
 revision 2026-07-10: principles 2, 3, 4, 6 reworded; adopter ordering and
 milestone labels remapped — per the approved disposition of external review
 PR #1, Consequences §2.)
-Governance: agentic-governance v0.6 (canonical `VERSION` 0.6.1)
+Governance: agentic-governance v0.7 (canonical `VERSION` 0.7.0)
 
 This file localizes [agentic-governance](https://github.com/djjay0131/agentic-governance)
 for this project.
@@ -97,9 +100,37 @@ rule in `CLAUDE.md` and `AGENTS.md` prevents its recreation.
 Path: none (the plan sequence in spec v2 §11 and `llm/plans/` serve as the
 roadmap; no checkbox roadmap document exists).
 
+## Canon Location
+
+Where the canonical `agentic-governance` repo lives, declared once. **This is
+the only machine-specific path this repo is permitted to contain** — every
+canon citation in `CLAUDE.md`, `AGENTS.md` and the check command below resolves
+against it, so it changes in one place instead of a dozen.
+
+- Canon checkout: `~/code/agentic-governance`
+- Canon repository: `https://github.com/djjay0131/agentic-governance`
+- Plugin registered: `repo` (`.claude/settings.json`)
+
+Skills and agents running as the installed plugin resolve canon from
+`${CLAUDE_PLUGIN_ROOT}/..` and need none of this; the declaration exists for
+everything that is read *without* the plugin loaded — static instructions in
+`CLAUDE.md`, and a check command run from a plain shell.
+
+**Deliberately not verified by `--layout`.** A canon checkout is
+environment-specific: CI fetches canon into a runner temp directory and has no
+such path, so asserting it would fail every CI run for a repo whose local
+declaration is perfectly correct. Verify it yourself when you change it —
+`ls <canon checkout>/VERSION`.
+
 ## Governance Check Command
 
-`node ~/code/agentic-governance/plugin/scripts/governance-checks.mjs --layout`
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/governance-checks.mjs" --layout` when the
+governance plugin is loaded — preferred, because it needs no declared path.
+From a plain shell, resolved against the `Canon checkout` declared in
+§Canon Location above:
+`node ~/code/agentic-governance/plugin/scripts/governance-checks.mjs --layout`.
+Never a bare machine path anywhere else: both forms reach canon through the
+single declaration above.
 
 Run from this repo's root. `--layout` enforces the two-plane rule and asserts
 that every path declared in §Repository Layout exists, on every run rather than
