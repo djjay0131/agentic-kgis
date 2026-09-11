@@ -1,8 +1,10 @@
 # Governance Delta: agentic-kgis
 
 Status: Approved
-Last updated: 2026-09-10 (canon location declared and the canon citations in
-`CLAUDE.md` and the check command below rebound to it, per agentic-governance
+Last updated: 2026-09-10 (canon pin moved v0.7 -> v0.8, in this header and in
+the `governance` job's pinned commit SHA together. Also 2026-09-10: canon
+location declared and the canon citations in `CLAUDE.md` and the check command
+below rebound to it, per agentic-governance
 v0.7.0; the governance plugin registered in `.claude/settings.json`. Earlier
 the same day: migrated to the v0.5 two-plane layout: control-plane
 content relocated from `docs/` to `llm/`, `## Repository Layout` declared, L0
@@ -10,7 +12,7 @@ allowlist and governance check command rebound to the declared paths. Prior
 revision 2026-07-10: principles 2, 3, 4, 6 reworded; adopter ordering and
 milestone labels remapped — per the approved disposition of external review
 PR #1, Consequences §2.)
-Governance: agentic-governance v0.7 (canonical `VERSION` 0.7.0)
+Governance: agentic-governance v0.8 (canonical `VERSION` 0.8.3)
 
 This file localizes [agentic-governance](https://github.com/djjay0131/agentic-governance)
 for this project.
