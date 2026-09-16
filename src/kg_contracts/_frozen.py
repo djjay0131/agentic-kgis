@@ -8,8 +8,9 @@ round-trip that `CurationPlan` and the ledger depend on.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Mapping
-from typing import Annotated, TypeAlias, TypeVar
+from typing import Annotated, NoReturn, TypeAlias, TypeVar
 
 from pydantic import PlainSerializer, TypeAdapter
 from pydantic.functional_validators import PlainValidator
@@ -17,31 +18,65 @@ from pydantic.functional_validators import PlainValidator
 VT = TypeVar("VT")
 
 
-class FrozenMapping(Mapping[str, object]):
-    """An immutable, hashable-free read-only mapping."""
+class FrozenMapping(dict[str, object]):
+    """An immutable, dict-backed read-only mapping.
 
-    __slots__ = ("_data",)
-    _data: dict[str, object]
+    Subclasses ``dict`` (rather than wrapping one behind ``Mapping``) on
+    purpose. Pydantic serializes ``object``/``Any``-typed values by *runtime
+    type inference*, which only emits types it recognizes natively: a plain
+    ``Mapping`` subclass raises ``Unable to serialize unknown type`` the moment
+    a frozen payload is nested as an opaque ``object`` value inside another
+    model's ``dict[str, object]`` field (KGCS's executor/compensation seam,
+    ADR-0010), whereas a ``dict`` subclass is serialized as a dict *everywhere*.
 
-    def __init__(self, data: Mapping[str, object]) -> None:
-        object.__setattr__(self, "_data", dict(data))
+    Immutability — the reason this type exists (Issue #7) — is preserved by
+    making every in-place mutator raise ``TypeError``. Construction goes through
+    the C-level ``dict`` constructor, which populates without calling the
+    blocked ``__setitem__``, so ``FrozenMapping({...})`` still works. Because the
+    data lives in the dict itself, ``model_dump_json`` output is byte-identical
+    to the plain dict the value was built from, and the ``CurationPlan`` /
+    ``CurationOperation`` JSON round-trip stays exact.
+    """
 
-    def __getitem__(self, key: str) -> object:
-        return self._data[key]
+    __slots__ = ()
 
-    def __iter__(self):  # type: ignore[no-untyped-def]
-        return iter(self._data)
+    def __setitem__(self, key: str, value: object) -> NoReturn:
+        raise TypeError("FrozenMapping is read-only")
 
-    def __len__(self) -> int:
-        return len(self._data)
+    def __delitem__(self, key: str) -> NoReturn:
+        raise TypeError("FrozenMapping is read-only")
 
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, Mapping):
-            return dict(self._data) == dict(other)
-        return NotImplemented
+    def __ior__(self, other: object) -> NoReturn:  # type: ignore[misc]
+        raise TypeError("FrozenMapping is read-only")
+
+    def clear(self) -> NoReturn:
+        raise TypeError("FrozenMapping is read-only")
+
+    def pop(self, *args: object) -> NoReturn:
+        raise TypeError("FrozenMapping is read-only")
+
+    def popitem(self) -> NoReturn:
+        raise TypeError("FrozenMapping is read-only")
+
+    def setdefault(self, *args: object) -> NoReturn:
+        raise TypeError("FrozenMapping is read-only")
+
+    def update(self, *args: object, **kwargs: object) -> NoReturn:
+        raise TypeError("FrozenMapping is read-only")
 
     def __repr__(self) -> str:
-        return f"FrozenMapping({self._data!r})"
+        return f"FrozenMapping({dict.__repr__(self)})"
+
+    # copy / pickle must rebuild through the constructor, never the blocked
+    # mutators, or a deep-copy of a model holding a FrozenMapping would raise.
+    def __copy__(self) -> FrozenMapping:
+        return FrozenMapping(self)
+
+    def __deepcopy__(self, memo: dict[int, object]) -> FrozenMapping:
+        return FrozenMapping({k: copy.deepcopy(v, memo) for k, v in self.items()})
+
+    def __reduce__(self) -> tuple[type[FrozenMapping], tuple[dict[str, object]]]:
+        return (FrozenMapping, (dict(self),))
 
 
 def _to_frozen(value: object) -> FrozenMapping:
