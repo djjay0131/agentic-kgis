@@ -1,8 +1,12 @@
 # Governance Delta: agentic-kgis
 
 Status: Approved
-Last updated: 2026-09-10 (canon pin moved v0.7 -> v0.8, in this header and in
-the `governance` job's pinned commit SHA together. Also 2026-09-10: canon
+Last updated: 2026-09-16 (canon pin moved v0.8 -> v0.9, in this header and in
+the `governance` job's pinned commit SHA together; §Platform Enforcement
+Reality gained the `delete_branch_on_merge` record, per agentic-governance
+v0.9.0. Prior revision 2026-09-10: canon pin moved v0.7 -> v0.8, in this
+header and in the `governance` job's pinned commit SHA together. Also
+2026-09-10: canon
 location declared and the canon citations in `CLAUDE.md` and the check command
 below rebound to it, per agentic-governance
 v0.7.0; the governance plugin registered in `.claude/settings.json`. Earlier
@@ -12,7 +16,7 @@ allowlist and governance check command rebound to the declared paths. Prior
 revision 2026-07-10: principles 2, 3, 4, 6 reworded; adopter ordering and
 milestone labels remapped — per the approved disposition of external review
 PR #1, Consequences §2.)
-Governance: agentic-governance v0.8 (canonical `VERSION` 0.8.3)
+Governance: agentic-governance v0.9 (canonical `VERSION` 0.9.0)
 
 This file localizes [agentic-governance](https://github.com/djjay0131/agentic-governance)
 for this project.
@@ -188,6 +192,16 @@ checker's hard-deny set.)
   `strict` (branch must be current with `main`). The `governance` job added at
   the v0.5 migration is NOT yet a required context; adding it is the next
   hardening step and needs an owner settings change, not a repo change.
+- Branch cleanup: `delete_branch_on_merge` is **true** (verified 2026-09-16
+  via `gh api repos/djjay0131/agentic-kgis -q .delete_branch_on_merge`, a
+  different endpoint from the protection call above). This is a
+  **repository** setting, not branch protection, which is why it is
+  available on every plan — it would have worked even while the
+  2026-07-09 free-plan 403 above made protection unavailable. It makes the
+  PR lifecycle's closing clause ("Branch deleted post-merge") a platform
+  fact rather than a flag whoever merges has to remember; canon states the
+  default in agentic-governance `llm/governance/branch-protection.md`
+  §Branch Cleanup (v0.9.0).
 - Token/identity model: all agent sessions authenticate with the owner's
   token — steward/auditor/architect are procedural roles, not distinct
   identities; independence is temporal/artifactual.
