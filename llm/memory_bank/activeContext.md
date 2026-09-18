@@ -1,5 +1,34 @@
 # Active Context — agentic-kgis
 
+Update 2026-09-18: **`import kgis` was broken for every consumer without the
+`[dev]` extra** (issue #37, fix PR). `kgis/evidence/__init__.py` eagerly
+imported `kgis/evidence/contract.py`, a reusable pytest suite, so the chain
+`kgis/__init__` → `extraction` → `runner` → `kgis.evidence` reached
+`import pytest` and raised `ModuleNotFoundError` under the runtime dependency
+set. The suite moved (`git mv`) to `src/kgis/testing/evidence.py`, the home
+spec §10.2 and `kg_contracts.testing` / `kgis.testing.contract` already
+establish for pytest-dependent suites; `kgis.evidence.EvidenceRegistryContract`
+still resolves, now through a PEP 562 `__getattr__`, so no adopter import
+breaks. Adding pytest to runtime dependencies was rejected — a test framework
+is not a runtime dependency of a library.
+
+The reason this survived 122 commits is a CI blind spot, not an oversight in
+review: the `test` job installs `.[dev]`, so pytest is importable in it by
+construction and no in-process import check could ever see the fault. Two
+guards now close it — a subprocess regression test that blocks `pytest` at the
+import-system level (`tests/test_packaging.py`) and a `runtime-import` CI job
+that does `pip install .` with no extras. 752 passed (750 before), ruff and
+`mypy --strict` (78 files) green.
+
+Also surfaced, not fixed here: **the repo has zero tags, zero releases and is
+not on PyPI**, while `version = "0.2.0"` has been frozen in `pyproject.toml`
+since commit `7e120f9` across 122 commits (20 of them touching
+`src/kg_contracts`, including #33's observable `FrozenMapping` serialization
+change). `agentic-kgcs` declares `agentic-kgis>=0.2.0`, which therefore
+distinguishes nothing, and adopters can only pin by raw commit SHA. Filed as
+issue #38 with three options; it needs an owner decision recorded as ADR-0024,
+and the repo has no release/versioning document at all today.
+
 Update 2026-09-10: **Migrated to the agentic-governance v0.5 two-plane
 layout** (PR #27, issue #26). The control plane moved out of `docs/` into
 `llm/`, by `git mv` so history follows: the governance delta to

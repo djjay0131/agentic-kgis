@@ -120,6 +120,21 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   ADRs. Entries above this line keep their pre-migration paths on purpose; see
   `activeContext.md` 2026-09-10 for the forward map.
 
+- 2026-09-18: **Runtime-import blocker fixed (issue #37).** `import kgis`
+  failed with `ModuleNotFoundError: No module named 'pytest'` for anyone who
+  installed without the `[dev]` extra — `kgis/evidence/__init__.py` eagerly
+  imported a pytest-based reusable suite sitting inside a runtime package. The
+  suite moved to `src/kgis/testing/evidence.py` (spec §10.2's home for such
+  suites); `from kgis.evidence import EvidenceRegistryContract` preserved via a
+  lazy module `__getattr__`, so the public surface narrows nowhere. Guarded by
+  a subprocess regression test that makes `pytest` unimportable and by a new
+  `runtime-import` CI job (`pip install .`, no extras) — the existing `test`
+  job installs `.[dev]` and was structurally blind to the whole fault class.
+  752 passed, ruff clean, `mypy --strict` clean (78 files). Also filed issue
+  #38: zero tags / zero releases / not on PyPI with a frozen `0.2.0` makes
+  `agentic-kgcs`'s `agentic-kgis>=0.2.0` pin nothing — owner decision needed,
+  ADR-0024.
+
 Works now: `kg_contracts` v2; both ingestion modes (deterministic structured
 sync + LLM document extraction) on a persistent candidate ledger + evidence
 registry; kg_eval v1 harness (P/R/F1, span/reference validity, hallucination/
