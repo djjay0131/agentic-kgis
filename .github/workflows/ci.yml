@@ -13,6 +13,34 @@ jobs:
       - run: mypy src
       - run: pytest -v
 
+  # Issue #37: the `test` job installs `.[dev]`, so it is structurally blind to
+  # a dev-only dependency leaking into a runtime `__init__` chain — pytest is
+  # always importable there. This job installs the published dependency set
+  # only (`pip install .`, no extras), which is what an adopter gets, and
+  # imports the three shipped packages. `pytest` is asserted absent first so a
+  # future change to the runner image cannot turn this into a silent no-op.
+  # Kept as its own job rather than a step in `test` so the two never share an
+  # environment.
+  runtime-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install .
+      - name: pytest must not be installed
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import sys
+
+          if importlib.util.find_spec("pytest") is not None:
+              sys.exit("pytest is installed; this job cannot prove the runtime import surface")
+          PY
+      # src layout: these resolve to the installed distribution, not to `src/`.
+      - run: python -c "import kg_contracts, kg_eval, kgis; print(kgis.__file__)"
+
   # The governance check command declared in
   # llm/governance/governance-delta.md §Governance Check Command, run on every
   # push and PR rather than only at onboarding. agentic-governance is pinned by
