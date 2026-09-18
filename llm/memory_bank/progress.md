@@ -120,20 +120,21 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   ADRs. Entries above this line keep their pre-migration paths on purpose; see
   `activeContext.md` 2026-09-10 for the forward map.
 
-- 2026-09-18: **Runtime-import blocker fixed (issue #37).** `import kgis`
-  failed with `ModuleNotFoundError: No module named 'pytest'` for anyone who
-  installed without the `[dev]` extra — `kgis/evidence/__init__.py` eagerly
-  imported a pytest-based reusable suite sitting inside a runtime package. The
-  suite moved to `src/kgis/testing/evidence.py` (spec §10.2's home for such
-  suites); `from kgis.evidence import EvidenceRegistryContract` preserved via a
-  lazy module `__getattr__`, so the public surface narrows nowhere. Guarded by
-  a subprocess regression test that makes `pytest` unimportable and by a new
-  `runtime-import` CI job (`pip install .`, no extras) — the existing `test`
-  job installs `.[dev]` and was structurally blind to the whole fault class.
-  752 passed, ruff clean, `mypy --strict` clean (78 files). Also filed issue
-  #38: zero tags / zero releases / not on PyPI with a frozen `0.2.0` makes
-  `agentic-kgcs`'s `agentic-kgis>=0.2.0` pin nothing — owner decision needed,
-  ADR-0024.
+- 2026-09-18: **Runtime-import blocker fixed (issue #37, PR #39); version 0.2.1.**
+  `import kgis` failed with `ModuleNotFoundError: No module named 'pytest'` for
+  anyone installed without the `[dev]` extra — `kgis/evidence/__init__.py`
+  eagerly imported a pytest-based reusable suite. Fixed by a PEP 562
+  `__getattr__`/`__dir__` on `kgis.evidence` that resolves the name in place; the
+  module does not move and no import path changes. An earlier revision of the PR
+  relocated it to `kgis/testing/evidence.py` citing a spec §10.2 convention that
+  independent review showed does not exist (and which three lines of
+  `llm/plans/2026-07-17-...` contradict); that revision was reverted, and the
+  layout question is issue #40 for an owner ADR. Guarded by an exhaustive
+  `pkgutil` sweep of all three packages under an allowlist import hook (stdlib +
+  the runtime distribution closure, computed from metadata) and by a
+  `runtime-import` CI job on 3.11/3.12. 753 passed, ruff clean, `mypy --strict`
+  clean (78 files), governance 4/4. Open: #38 (zero tags / frozen version — owner
+  decision), #40 (suite-layout ADR), #41 (`py.typed` for `kgis`/`kg_eval`).
 
 Works now: `kg_contracts` v2; both ingestion modes (deterministic structured
 sync + LLM document extraction) on a persistent candidate ledger + evidence

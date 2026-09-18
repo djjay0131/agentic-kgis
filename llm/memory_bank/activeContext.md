@@ -1,33 +1,58 @@
 # Active Context — agentic-kgis
 
 Update 2026-09-18: **`import kgis` was broken for every consumer without the
-`[dev]` extra** (issue #37, fix PR). `kgis/evidence/__init__.py` eagerly
-imported `kgis/evidence/contract.py`, a reusable pytest suite, so the chain
-`kgis/__init__` → `extraction` → `runner` → `kgis.evidence` reached
-`import pytest` and raised `ModuleNotFoundError` under the runtime dependency
-set. The suite moved (`git mv`) to `src/kgis/testing/evidence.py`, the home
-spec §10.2 and `kg_contracts.testing` / `kgis.testing.contract` already
-establish for pytest-dependent suites; `kgis.evidence.EvidenceRegistryContract`
-still resolves, now through a PEP 562 `__getattr__`, so no adopter import
-breaks. Adding pytest to runtime dependencies was rejected — a test framework
-is not a runtime dependency of a library.
+`[dev]` extra** (issue #37, PR #39, version bumped 0.2.0 → 0.2.1).
+`kgis/evidence/__init__.py` eagerly imported `kgis/evidence/contract.py`, a
+reusable pytest suite, so the chain `kgis/__init__` → `extraction` → `runner` →
+`kgis.evidence` reached `import pytest` and raised `ModuleNotFoundError` under
+the runtime dependency set (`pydantic` alone). The fix is a PEP 562
+`__getattr__`/`__dir__` pair on `kgis.evidence` that resolves the name **in
+place**: the module stays where Plan 2 put it, both
+`from kgis.evidence import EvidenceRegistryContract` and
+`from kgis.evidence.contract import ...` keep working, and nothing is relocated.
+Adding pytest to runtime dependencies was rejected outright.
 
-The reason this survived 122 commits is a CI blind spot, not an oversight in
-review: the `test` job installs `.[dev]`, so pytest is importable in it by
-construction and no in-process import check could ever see the fault. Two
-guards now close it — a subprocess regression test that blocks `pytest` at the
-import-system level (`tests/test_packaging.py`) and a `runtime-import` CI job
-that does `pip install .` with no extras. 752 passed (750 before), ruff and
-`mypy --strict` (78 files) green.
+**Process note worth keeping.** The first attempt at this PR *moved* the suite to
+`src/kgis/testing/evidence.py` and justified it by citing spec §10.2 as
+establishing a "reusable suites live in `testing` subpackages" convention.
+Independent review found that convention **does not exist**: §10.2 says reusable
+suites must exist, nothing about where they live, and
+`llm/plans/2026-07-17-...` lines 43/1723/1744 prescribe the *old* location three
+times. The move would have reversed a documented decision on a false citation
+and shipped a breaking removal of `kgis.evidence.contract` under a frozen
+version. It was reverted; laziness alone fixes the defect, and the layout
+question is now issue #40 for an owner ADR decision rather than something a bug
+fix settles by fiat.
 
-Also surfaced, not fixed here: **the repo has zero tags, zero releases and is
-not on PyPI**, while `version = "0.2.0"` has been frozen in `pyproject.toml`
-since commit `7e120f9` across 122 commits (20 of them touching
-`src/kg_contracts`, including #33's observable `FrozenMapping` serialization
-change). `agentic-kgcs` declares `agentic-kgis>=0.2.0`, which therefore
-distinguishes nothing, and adopters can only pin by raw commit SHA. Filed as
-issue #38 with three options; it needs an owner decision recorded as ADR-0024,
-and the repo has no release/versioning document at all today.
+The reason this survived 122 commits is a CI blind spot: the `test` job installs
+`.[dev]`, so pytest is importable in it by construction and no in-process import
+check could see the fault. Two guards close it. `tests/test_packaging.py` now
+runs an exhaustive `pkgutil` sweep of **every** module in all three packages
+inside a subprocess whose import hook is an **allowlist** — the stdlib plus the
+distribution closure of the non-extra requirements, computed from installed
+metadata so it tracks `pyproject.toml`. A denylist of `pytest`/`_pytest` was not
+enough: a transitive dev dep such as `pluggy` walked straight through it. Two
+modules are exempt by name (`kg_contracts.testing.contract`,
+`kgis.evidence.contract`); `kgis/structured/testing.py` and
+`kgis/ledger/contract.py` are reusable suites eagerly re-exported from runtime
+packages and are deliberately **not** exempt, so the day either grows a
+`pytest.raises` the sweep goes red. Verified by five separate attacks. The
+`runtime-import` CI job (`pip install .`, no extras, 3.11 + 3.12 matrix) is
+defence in depth only — it is not a required status check, whereas `test` is, so
+the sweep carries the enforcement.
+
+753 passed (750 before), ruff and `mypy --strict` (78 files) green, governance
+4/4.
+
+Also surfaced, not fixed: **zero tags, zero releases, not on PyPI**, with
+`version` frozen at `0.2.0` since commit `7e120f9` across 122 commits — 35 of
+them (36 with merges) touching `src/kg_contracts`, including #33's observable
+`FrozenMapping` serialization change. `agentic-kgcs` declares
+`agentic-kgis>=0.2.0`, which therefore distinguishes nothing. Filed as issue #38
+for an owner decision recorded as an ADR; the 0.2.1 bump here is a stopgap that
+makes the importable tree nameable, not a resolution. Issue #41 tracks the
+missing `py.typed` markers on `kgis` and `kg_eval`, which make both packages
+untyped for every downstream consumer.
 
 Update 2026-09-10: **Migrated to the agentic-governance v0.5 two-plane
 layout** (PR #27, issue #26). The control plane moved out of `docs/` into
