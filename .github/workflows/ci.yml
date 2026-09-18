@@ -13,21 +13,30 @@ jobs:
       - run: mypy src
       - run: pytest -v
 
-  # Issue #37: the `test` job installs `.[dev]`, so it is structurally blind to
-  # a dev-only dependency leaking into a runtime `__init__` chain — pytest is
-  # always importable there. This job installs the published dependency set
-  # only (`pip install .`, no extras), which is what an adopter gets, and
-  # imports the three shipped packages. `pytest` is asserted absent first so a
-  # future change to the runner image cannot turn this into a silent no-op.
-  # Kept as its own job rather than a step in `test` so the two never share an
-  # environment.
+  # Issue #37: the `test` job installs `.[dev]`, so pytest is importable in it by
+  # construction and it is structurally blind to a dev-only dependency leaking
+  # into a runtime `__init__` chain. This job installs the published dependency
+  # set only (`pip install .`, no extras) — what an adopter gets — and imports the
+  # packages plus the subpackage entry points adopters use directly.
+  #
+  # Defence in depth, not the primary guard: `tests/test_packaging.py` runs the
+  # same invariant as an exhaustive sweep inside the `test` job, which IS a
+  # required status check. This job is currently advisory (see the delta,
+  # §Platform Enforcement Reality), so the enforcement lives in the sweep.
+  #
+  # Matrix covers the floor `requires-python = ">=3.11"` advertises; the `test`
+  # job only ever exercised 3.12.
   runtime-import:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "${{ matrix.python-version }}"
       - run: pip install .
       - name: pytest must not be installed
         run: |
@@ -39,7 +48,26 @@ jobs:
               sys.exit("pytest is installed; this job cannot prove the runtime import surface")
           PY
       # src layout: these resolve to the installed distribution, not to `src/`.
-      - run: python -c "import kg_contracts, kg_eval, kgis; print(kgis.__file__)"
+      - name: runtime and adopter entry points import
+        run: |
+          python - <<'PY'
+          import importlib
+
+          for name in (
+              "kg_contracts",
+              "kg_eval",
+              "kgis",
+              "kgis.evidence",
+              "kgis.extraction",
+              "kgis.ledger",
+              "kgis.registry",
+              "kgis.sources",
+              "kgis.structured",
+              "kgis.testing",
+          ):
+              importlib.import_module(name)
+          print("all runtime entry points import without the [dev] extra")
+          PY
 
   # The governance check command declared in
   # llm/governance/governance-delta.md §Governance Check Command, run on every
