@@ -6,3 +6,6 @@ __pycache__/
 .ruff_cache/
 .coverage
 dist/
+
+# Claude Code agent worktrees — ephemeral, never committed
+.claude/worktrees/
