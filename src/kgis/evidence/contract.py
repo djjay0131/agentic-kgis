@@ -1,9 +1,13 @@
 """kgis-local reusable suite for any evidence registry (NOT a kg_contracts edit).
 
-Lives under `kgis.testing` (spec §10.2) because it imports `pytest`, a
-dev-only dependency: nothing reachable from a runtime `__init__` chain may
-import it (issue #37). `kgis.evidence.EvidenceRegistryContract` still resolves
-here, lazily.
+Imports `pytest`, which is a **dev-only** dependency (`[project.optional-dependencies]
+.dev`). Nothing reachable from a runtime `__init__` chain may import this module
+eagerly, or `import kgis` breaks for every consumer who installed without the `[dev]`
+extra — that was issue #37. `kgis.evidence` therefore resolves
+`EvidenceRegistryContract` lazily; see `kgis/evidence/__init__.py`.
+
+`tests/test_packaging.py` enumerates this module in `DEV_ONLY_MODULES` and proves
+nothing else in the three packages imports outside the runtime dependency closure.
 """
 
 from __future__ import annotations

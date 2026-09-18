@@ -10,9 +10,9 @@ from kg_contracts.evidence import (
     present_evidence,
 )
 
+from kgis.evidence.contract import EvidenceRegistryContract
 from kgis.evidence.schema import SCHEMA_SQL
 from kgis.evidence.store import EvidenceNotFoundError, SqliteEvidenceRegistry
-from kgis.testing.evidence import EvidenceRegistryContract
 
 NOW = datetime(2026, 7, 21, tzinfo=UTC)
 PROV = Provenance(source="test", actor="tester")
