@@ -1,0 +1,97 @@
+name: Docs — build, validate, and (gated) publish
+
+# Builds the KGIS documentation site (docs-site/, MkDocs Material), validates
+# the satellite publishing manifest against the hub contract, and runs the
+# base-path link-check. The actual publish to the research hub is GATED: it runs
+# only on a manual workflow_dispatch, because the `kgis` satellite is NOT
+# provisioned yet (owner-only Terraform in website/infra + the GCP_* repo vars).
+# Build + validate + link-check run on every push/PR so the docs cannot silently
+# rot; publish stays off until the owner enables it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs-site/**"
+      - "pyproject.toml"
+      - ".github/workflows/docs-publish.yml"
+  pull_request:
+    paths:
+      - "docs-site/**"
+      - "pyproject.toml"
+      - ".github/workflows/docs-publish.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write          # required by the publish action (WIF); harmless otherwise
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install docs dependencies
+        run: uv sync --extra docs
+
+      - name: Build the docs site
+        run: uv run --extra docs mkdocs build --strict -f docs-site/mkdocs.yml
+
+      # MkDocs cleans site_dir on build, so the manifest is copied AFTER the
+      # build. It must land at the ROOT of the uploaded dist folder.
+      - name: Stage the manifest into dist/
+        run: cp docs-site/manifest.json docs-site/dist/manifest.json
+
+      - name: Set up Node (for the contract validator)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Validate the manifest against the hub contract
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/djjay0131/website/main/contract/validate-manifest.mjs \
+            -o /tmp/validate-manifest.mjs
+          curl -fsSL \
+            https://raw.githubusercontent.com/djjay0131/website/main/contract/manifest.schema.json \
+            -o /tmp/manifest.schema.json
+          node /tmp/validate-manifest.mjs --dist docs-site/dist --source kgis
+
+      - name: Base-path link-check
+        run: |
+          python3 docs-site/linkcheck.py \
+            --dist docs-site/dist \
+            --base-path /projects/kgis/kgis-docs/
+
+      # ---------------------------------------------------------------------
+      # GATED PUBLISH — disabled until the owner provisions the kgis satellite.
+      #
+      # Prerequisites (owner-only, see the feature spec Follow-ups):
+      #   1. Terraform in website/infra: the `kgis` source, a WIF provider entry
+      #      for djjay0131/agentic-kgis, and prefix-scoped IAM to sources/kgis/.
+      #   2. Repo variables: GCP_PROJECT_ID, GCP_WIF_PROVIDER, GCP_PUBLISH_SA,
+      #      GCP_CONTENT_BUCKET.
+      # Until then this step is skipped on every trigger except a manual
+      # workflow_dispatch (where it will fail on auth if the satellite is still
+      # unprovisioned — that is expected and loses nothing).
+      # ---------------------------------------------------------------------
+      - name: Publish to the research hub (gated)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: djjay0131/website/contract/publish@main
+        with:
+          dist: docs-site/dist
+          source: kgis
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_PUBLISH_SA }}
+          bucket: ${{ vars.GCP_CONTENT_BUCKET }}
