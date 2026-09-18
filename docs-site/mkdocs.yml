@@ -1,0 +1,65 @@
+site_name: KGIS Documentation
+site_description: >-
+  What KGIS is, why it exists, its architecture, and how to use it — the
+  deterministic, evidence-first knowledge-graph ingestion platform.
+site_url: https://jason.cusati.us/projects/kgis/kgis-docs/
+
+docs_dir: content
+site_dir: dist
+
+# Emit *.html (no per-page directories) and rely on MkDocs relative links, so
+# the whole site works served verbatim under /projects/kgis/kgis-docs/.
+# Do NOT change this to true: directory URLs plus a sub-path mount is the #1
+# way this satellite deploy breaks.
+use_directory_urls: false
+
+theme:
+  name: material
+  # Lightly branded (a calm indigo/teal), not default-loud, to sit comfortably
+  # inside jason.cusati.us without doing any hub-chrome work.
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - toc.integrate
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - tables
+  - attr_list
+
+nav:
+  - What is KGIS: index.md
+  - Why KGIS: why.md
+  - Architecture: architecture.md
+  - Using KGIS:
+      - Quickstart: usage/quickstart.md
+      - Structured sync: usage/structured-sync.md
+      - LLM extraction: usage/llm-extraction.md
+  - Concepts: concepts.md
+  - API basics: api.md
