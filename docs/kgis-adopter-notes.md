@@ -45,3 +45,36 @@ optional to the row. Move the missing-value handling *inside* that builder's
 `build()` (e.g. skip emitting the relation when `team` is absent) so the
 co-builders' candidates still survive. `required_fields` is a hard, row-level
 gate — reserve it for fields whose absence should sink the entire row.
+
+## Installing without the `[dev]` extra (issue #37)
+
+`pip install agentic-kgis` — no extras — is now enough to `import kgis`. Before
+0.2.1 it was not: `kgis/evidence/__init__.py` eagerly imported a reusable
+`pytest` suite, so `import kgis` raised `ModuleNotFoundError: No module named
+'pytest'` unless you had installed `.[dev]`. The runtime dependency set is
+`pydantic>=2.0` and nothing else, and `tests/test_packaging.py` now sweeps every
+module in `kg_contracts`, `kgis` and `kg_eval` to keep it that way.
+
+Nothing about the public surface changed. `from kgis.evidence import
+EvidenceRegistryContract` and `from kgis.evidence.contract import
+EvidenceRegistryContract` both still work; the first is resolved lazily, so it
+pulls `pytest` only at the moment you touch the name — which is what you want,
+since the suite is something you subclass in your own test run.
+
+Two consequences of that laziness, if you are writing capability-detection code:
+
+- `hasattr(kgis.evidence, "EvidenceRegistryContract")` **raises**
+  `ModuleNotFoundError` in an environment without `pytest`, rather than
+  returning `False` (`hasattr` only swallows `AttributeError`). Probe with
+  `importlib.util.find_spec("pytest")` instead.
+- `dir(kgis.evidence)` still lists the name, and `from kgis.evidence import *`
+  still exports it.
+
+### Pinning
+
+There are still **no tags and no PyPI release** (issue #38), so a SHA remains the
+only exact pin. The version bump to `0.2.1` at least makes the importable tree
+distinguishable from the broken one: a build from this commit or later reports
+`importlib.metadata.version("agentic-kgis") == "0.2.1"`, and a `pip`-resolvable
+constraint of `agentic-kgis>=0.2.1` against a git install now means something.
+`agentic-kgcs`'s `agentic-kgis>=0.2.0` does not.
