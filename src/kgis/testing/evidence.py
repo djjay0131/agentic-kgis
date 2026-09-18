@@ -1,4 +1,10 @@
-"""kgis-local reusable suite for any evidence registry (NOT a kg_contracts edit)."""
+"""kgis-local reusable suite for any evidence registry (NOT a kg_contracts edit).
+
+Lives under `kgis.testing` (spec §10.2) because it imports `pytest`, a
+dev-only dependency: nothing reachable from a runtime `__init__` chain may
+import it (issue #37). `kgis.evidence.EvidenceRegistryContract` still resolves
+here, lazily.
+"""
 
 from __future__ import annotations
 
