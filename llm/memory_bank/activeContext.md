@@ -36,13 +36,33 @@ modules are exempt by name (`kg_contracts.testing.contract`,
 `kgis.evidence.contract`); `kgis/structured/testing.py` and
 `kgis/ledger/contract.py` are reusable suites eagerly re-exported from runtime
 packages and are deliberately **not** exempt, so the day either grows a
-`pytest.raises` the sweep goes red. Verified by five separate attacks. The
+`pytest.raises` the sweep goes red.
+
+Review pass 2 then broke that guard twice, and both lessons are worth keeping.
+The exemption set had a rot-guard asserting `"pytest" in sys.modules` **in the
+pytest process**, where it is unconditionally true — a test that could not fail,
+which let a leaf module be exempted and silently dropped from every check.
+Anything that must be able to fail now runs inside the sweep subprocess, and an
+exemption must fail *specifically* because of `pytest` (the `[dev]` extra is
+pytest + ruff + mypy; the latter two are CLIs nothing imports, so any other
+missing dependency is an undeclared one). Enumeration also moved from
+`pkgutil.iter_modules` to a filesystem walk, because `iter_modules` does not
+descend into a PEP 420 namespace directory that the wheel ships happily. Ten
+attacks now verified red-alone/green-after-revert. The
 `runtime-import` CI job (`pip install .`, no extras, 3.11 + 3.12 matrix) is
 defence in depth only — it is not a required status check, whereas `test` is, so
 the sweep carries the enforcement.
 
-753 passed (750 before), ruff and `mypy --strict` (78 files) green, governance
-4/4.
+754 passed (750 before), ruff and `mypy --strict` (78 files) green, governance
+4/4. The sweep finds 78 modules, sweeps 76, and derives both exemptions as
+`pytest`.
+
+One scope limit, recorded because it is structural rather than an oversight: the
+invariant is **import-time only**. A module-level `__getattr__` reaching a
+dev-only dependency is invisible to it — and that is precisely the mechanism the
+fix uses, so no guard can separate a good deferral from a bad one. Lazy-export
+tables (`kgis/evidence/__init__.py`'s `_LAZY`, the only one) therefore carry the
+same review burden as the exemption set.
 
 Also surfaced, not fixed: **zero tags, zero releases, not on PyPI**, with
 `version` frozen at `0.2.0` since commit `7e120f9` across 122 commits — 35 of

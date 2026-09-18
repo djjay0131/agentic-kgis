@@ -130,9 +130,13 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   independent review showed does not exist (and which three lines of
   `llm/plans/2026-07-17-...` contradict); that revision was reverted, and the
   layout question is issue #40 for an owner ADR. Guarded by an exhaustive
-  `pkgutil` sweep of all three packages under an allowlist import hook (stdlib +
+  filesystem sweep of all three packages under an allowlist import hook (stdlib +
   the runtime distribution closure, computed from metadata) and by a
-  `runtime-import` CI job on 3.11/3.12. 753 passed, ruff clean, `mypy --strict`
+  `runtime-import` CI job on 3.11/3.12. Review pass 2 defeated an earlier version
+  of the guard twice — a rot-guard that asserted `"pytest" in sys.modules` inside
+  the pytest process could never fail, and `pkgutil` enumeration skipped PEP 420
+  namespace directories; both closed, ten attacks verified red.
+  754 passed, ruff clean, `mypy --strict`
   clean (78 files), governance 4/4. Open: #38 (zero tags / frozen version — owner
   decision), #40 (suite-layout ADR), #41 (`py.typed` for `kgis`/`kg_eval`).
 
