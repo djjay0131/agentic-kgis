@@ -1,0 +1,18 @@
+{
+  "source": "kgis",
+  "manifest_version": "1",
+  "published": "2026-09-18T00:00:00Z",
+  "items": [
+    {
+      "slug": "kgis-docs",
+      "title": "KGIS Documentation",
+      "section": "projects",
+      "format": "html",
+      "path": "index.html",
+      "visibility": "public",
+      "date": "2026-09-18",
+      "summary": "What KGIS is, why it exists, its architecture, and how to use it: the deterministic, evidence-first knowledge-graph ingestion platform.",
+      "tags": ["kgis", "knowledge-graph", "ingestion"]
+    }
+  ]
+}
