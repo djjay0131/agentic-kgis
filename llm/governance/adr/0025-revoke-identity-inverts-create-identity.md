@@ -119,7 +119,15 @@ Three tests close it:
   one "show everything" flag; such an adapter passes either single-flag test
   on its own.
 - `test_revoke_identity_hides_entity_and_preserves_creation_epoch` — the
-  rollback property itself, including that the epoch is left alone.
+  rollback property itself, including that the epoch is left alone **and
+  that the record is still served when `curation_epoch=` and
+  `include_revoked=True` are combined**. That cross term is load-bearing,
+  not decorative: an adapter can preserve the epoch stamp and still drop the
+  record on an epoch-scoped read, which is precisely how a rolled-back run
+  would lose the history of what it rolled back. Measured — such an adapter
+  passes this test with the cross term removed and fails it with the cross
+  term present. Asserting the epoch *field* alone does not establish the
+  property this ADR argues hardest for; asserting the *read* does.
 
 A published conformance suite that cannot detect a violation of the contract
 it publishes is the same defect class this ADR's second half exists to fix,
@@ -152,6 +160,26 @@ and holds. The reverse direction is bounded as above, pinned by
 `test_revoke_round_trip_restores_the_identity_but_not_its_creation_epoch` so
 the bound cannot rot into an assumed guarantee, and a proper
 `RESTORE_IDENTITY` type is issue #51.
+
+**The obvious cheap fix is provably wrong — do not attempt it.** The tempting
+one-line repair is to let `CREATE_IDENTITY` honour a `curation_epoch` already
+present in its payload, so replaying `reversal_data` restores the original
+stamp. Measured: that mutation reddens **three** tests, and two of them are
+the *forward* leg —
+`test_revoke_identity_preserves_the_creation_epoch` and the conformance test
+`test_revoke_identity_hides_entity_and_preserves_creation_epoch`. The reason
+is structural, not incidental: `CREATE_IDENTITY` stamping the committing
+epoch is exactly what makes a created identity belong to the epoch that
+created it, so a payload-wins rule stops `CREATE_IDENTITY` assigning epochs
+at all and any caller-supplied stamp (including a factory default) silently
+becomes the record's epoch. Repairing the reverse leg this way **corrupts the
+forward-leg guarantee issue #44 exists to deliver**, and it hands callers the
+ability to forge epochs.
+
+So the position is not "we chose not to fix this now"; it is **"this cannot
+be fixed this way."** A distinct operation type that flips status without
+touching the epoch is the only correct repair, which is why issue #51
+proposes `RESTORE_IDENTITY` rather than a change to `CREATE_IDENTITY`.
 
 Note also that `reversal_data` must carry the **pre-revoke (`ACTIVE`)** entity
 dump; replaying a post-revoke copy restores the identity still `REVOKED`.
@@ -268,7 +296,9 @@ status.
 - Issue #44; follow-up issues #45 (`PROMOTE_ONTOLOGY_TERM` has no inverse),
   #48 (`INVERSE_OPERATION_TYPES` is mutable), #49 (a revoked identity's
   assertions stay visible), #50 (single-batch ordering; double revoke),
-  #51 (no `RESTORE_IDENTITY`: the reverse leg loses the creation epoch)
+  #51 (no `RESTORE_IDENTITY`: the reverse leg loses the creation epoch),
+  #52 (the published conformance suite has no `find_entities`/`neighborhood`
+  coverage)
 
 ## Supersedes
 

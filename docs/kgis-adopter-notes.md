@@ -210,8 +210,15 @@ exist rather than silently skipping it.
 0.3.0 the suite pinned `include_superseded` but said nothing about
 `include_revoked`, so an adapter could pass conformance while serving
 withdrawn records on ordinary reads. If your adapter ignores `include_revoked`,
-or collapses it and `include_superseded` into one "show everything" flag, it
-now **fails conformance** instead of passing quietly.
+collapses it and `include_superseded` into one "show everything" flag, or
+serves revoked records on an unscoped read but drops them when
+`curation_epoch=` and `include_revoked=True` are **combined**, it now
+**fails conformance** instead of passing quietly. All three were confirmed by
+building the exploiting adapter and running the suite against it.
+
+Known remaining gap: the suite still has no `find_entities`/`neighborhood`
+coverage (issue #52), so those two read methods are not yet checked against
+the status filters cross-adapter. Check them yourself until that lands.
 
 ### Pinning
 

@@ -84,12 +84,35 @@ epoch-scoped read at the original creation epoch no longer finds it — the
 exact failure ADR-0025 preserves the epoch to prevent, on the other leg.
 Cause: `CREATE_IDENTITY` means "came into existence now" and stamps the
 committing epoch, which is right for a create and wrong for restoring a
-tombstone. Taken as *state the bound* rather than *fix it*, because fixing it
-means a new `RESTORE_IDENTITY` type (issue #51) and a second vocabulary change
-late in review that KGCS would also have to absorb. Documented in ADR-0025 §6
+tombstone. Taken as *state the bound* rather than *fix it* — and re-review then
+produced a stronger result than that choice deserved: **the obvious cheap fix
+is provably wrong.** Letting `CREATE_IDENTITY` honour a payload
+`curation_epoch` reddens three tests, two of them on the *forward* leg,
+because stamping the committing epoch is exactly what makes a created
+identity belong to the epoch that created it — a payload-wins rule stops
+`CREATE_IDENTITY` assigning epochs at all and lets callers forge them. So the
+record now says "this cannot be fixed this way", not "we chose not to fix
+this now", which is a far better handover for whoever picks up #51. General
+lesson: when deferring a fix, measure the tempting shortcut too — the
+strongest form of a deferral is proof that the cheap repair is unsound. Documented in ADR-0025 §6
 and the `INVERSE_OPERATION_TYPES` docstring, pinned by a test, with mutant B1
 proving that test is not vacuous. The direction the PR exists to provide is
 epoch-preserving and holds.
+
+**Third review pass — conformance coverage is a property to test, not a box
+to tick.** Two residual flagless claims about epoch-scoped reads survived the
+Amendment-1 sweep, one of them in `curation.py`'s `CurationOperationType`
+docstring — the highest-traffic text in the repo, since it is what IDE hover
+shows every adopter. Corrected, and a repo-wide sweep now shows no residue.
+More interesting: the published suite asserted the `curation_epoch` *field*
+after a revoke but never combined `curation_epoch=` with `include_revoked` on
+a *read*, so "history survives an epoch-scoped read" — the property ADR-0025
+argues hardest for — was unenforced cross-adapter. An adapter can preserve
+the stamp and still drop the record when the two options combine. Verified
+the cross term is load-bearing the same way the independence test was: built
+the exploiting adapter, confirmed it **passes** with the cross term removed
+and **fails** with it present. Asserting a field is not asserting the
+behaviour the field exists to support.
 
 **Verification note worth keeping.** 27 mutants, each run against its named
 tests alone with an unmutated control in every batch. One survived: the
