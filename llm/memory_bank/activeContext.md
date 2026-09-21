@@ -64,6 +64,33 @@ the KGCS shape so the validator cannot come back silently. General lesson:
 a narrowing that a consumer's normal output violates is a hypothesis about
 the contract, not a tightening of it — check the consumers first.
 
+**Two amendments from adversarial review (both should-fix, review returned
+APPROVE).** (1) `GraphMutationStoreContract` — the suite every adapter must
+pass — pinned `include_superseded` but had no `include_revoked` coverage, so
+an adapter could pass conformance while silently serving withdrawn records on
+ordinary reads. ADR-0025's "failure is loud" argument only ever covered the
+write side; the read side failed quietly, and the downstream adopter's
+`Neo4jCanonicalGraphStore` would have inherited the hole. Three tests added,
+the load-bearing one being the *cross terms* — an adapter that collapses
+`include_superseded` and `include_revoked` into one "show everything" flag
+passes either single-flag test on its own. General lesson: **a published
+conformance suite that cannot detect a violation of the contract it publishes
+is the same defect class as a test that verifies nothing.** When a contract
+moves, the suite moves with it.
+
+(2) The revoke round trip loses the creation epoch: CREATE @1 → REVOKE (epoch
+preserved) → CREATE_IDENTITY from `reversal_data` → back ACTIVE @3, and the
+epoch-scoped read at the original creation epoch no longer finds it — the
+exact failure ADR-0025 preserves the epoch to prevent, on the other leg.
+Cause: `CREATE_IDENTITY` means "came into existence now" and stamps the
+committing epoch, which is right for a create and wrong for restoring a
+tombstone. Taken as *state the bound* rather than *fix it*, because fixing it
+means a new `RESTORE_IDENTITY` type (issue #51) and a second vocabulary change
+late in review that KGCS would also have to absorb. Documented in ADR-0025 §6
+and the `INVERSE_OPERATION_TYPES` docstring, pinned by a test, with mutant B1
+proving that test is not vacuous. The direction the PR exists to provide is
+epoch-preserving and holds.
+
 **Verification note worth keeping.** 27 mutants, each run against its named
 tests alone with an unmutated control in every batch. One survived: the
 `curation_epoch`-preservation test also passed against a store that ignored

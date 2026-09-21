@@ -157,10 +157,10 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   was irreversible; added `REVOKE_IDENTITY` (tombstone, creation epoch
   preserved), `INVERSE_OPERATION_TYPES`, and `GraphReadOptions.include_revoked`
   with `REVOKED` hidden by default — without which the revoke would have had
-  no observable effect. 781 passed, ruff clean, `mypy --strict` clean (78
-  files). 28 mutants killed against named tests with an unmutated control;
+  no observable effect. 785 passed, ruff clean, `mypy --strict` clean (78
+  files). 33 mutants killed against named tests with an unmutated control;
   one survivor found and closed. KGCS must implement the compensator half
-  (see the PR body). Follow-up: #45 (`PROMOTE_ONTOLOGY_TERM` has no inverse).
+  (see the PR body). Adversarial review returned APPROVE with two should-fix amendments, both landed: `include_revoked` coverage in the published conformance suite (an adapter could previously pass conformance while violating the new read contract), and the revoke round trip's loss of the creation epoch documented as a bound and pinned. Follow-ups: #45 (`PROMOTE_ONTOLOGY_TERM` has no inverse), #48 (the pairing map is a mutable dict), #49 (revoked identities keep visible assertions), #50 (batch-ordering and double-revoke edges), #51 (no `RESTORE_IDENTITY`).
 
 Works now: `kg_contracts` v2; both ingestion modes (deterministic structured
 sync + LLM document extraction) on a persistent candidate ledger + evidence
