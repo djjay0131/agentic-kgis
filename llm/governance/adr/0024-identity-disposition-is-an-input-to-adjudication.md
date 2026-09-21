@@ -80,11 +80,10 @@ Make the identity disposition an explicit input to adjudication.
    onto the enum, so no caller derives it by hand:
    `create_new_identity` → `NEW_IDENTITY`; a named `resolved_identity` →
    `RESOLVED_EXISTING`; neither → `UNRESOLVED`.
-6. A fail-closed narrowing (ADR-0021 pattern) on `ResolutionDecision`:
-   `create_new_identity=True` forbids a non-null `resolved_identity`. Left
-   representable, that contradiction would map to `NEW_IDENTITY` and waive
-   the resolution gate for a decision that says, in its other field, that it
-   resolved.
+6. `identity_disposition()` checks `create_new_identity` **first**, so it
+   decides even when `resolved_identity` is also set. That combination is the
+   expected shape for a new-identity decision, not a contradiction — see
+   "A validator was proposed here and rejected" below.
 
 ## Rationale
 
@@ -115,6 +114,46 @@ resolution output into the gate, which is exactly what ADR-0007 mandates
 (stage 6, "deterministic policy gate routing on calibrated error risk and
 consequence class: auto-link / retain separately / human review / gather
 evidence / abstain"). "Retain separately" is `NEW_IDENTITY`.
+
+### A validator was proposed here and rejected
+
+An earlier revision of this change added a fail-closed narrowing
+(ADR-0021 pattern) rejecting `create_new_identity=True` alongside a non-null
+`resolved_identity`, on the reading that the two are mutually exclusive
+claims. It was removed before merge, for three reasons — the first fatal on
+its own.
+
+**It cannot fail for the reason it names.** `kg_contracts` holds no graph
+access, so it cannot distinguish a freshly minted identity id from a
+pre-existing one: both are `kg://<graph-id>/identity/<ulid>`. The check
+therefore fired on every new-identity decision that named the id it minted,
+and still could not detect a decision that named a genuinely pre-existing
+one. It rejected the legitimate case and missed the illegitimate one.
+
+**Its premise was never established.** The narrowing assumed
+`resolved_identity` means "the pre-existing identity we resolved onto".
+Neither spec §7.4 nor the Plan-1 field list defines the field's meaning when
+`create_new_identity` is True. The competing reading — "the identity this
+candidate ends up attached to" — makes naming the minted id not merely legal
+but necessary, since the executor needs it to build the `CREATE_IDENTITY`
+payload. That question is issue #47, for an owner ADR decision; it is not
+something this ADR settles by fiat, and it is not a prerequisite for the
+deadlock fix.
+
+**It was incidental, and it broke a consumer.**
+`identity_disposition()` tests `create_new_identity` first, so the mapping
+was already total and unambiguous without the validator; removing it changes
+no disposition and no routing outcome. Meanwhile
+`kgcs.policy.ResolutionPolicy.resolve` sets both fields for every
+AUTO-routed entity candidate, so the validator would have raised for every
+such candidate in `agentic-kgcs` the moment an adopter pinned the new
+contract — trading a platform that plans nothing for a platform that raises,
+and making a one-repo fix into a sequenced two-repo migration nobody could
+pin an intermediate state of.
+
+`test_new_identity_decision_may_also_name_the_minted_identity` and
+`test_create_new_identity_wins_over_a_named_identity_in_the_disposition` pin
+the resulting behaviour, so reintroducing the validator fails the suite.
 
 ## Alternatives Considered
 
@@ -200,7 +239,8 @@ honest-null design forbids, and would make `UNRESOLVED` unrepresentable.
 
 ## Related Issues / PRs
 
-- Issue #43
+- Issue #43; follow-up issue #47 (`resolved_identity`'s meaning when
+  `create_new_identity` is True — owner ADR decision)
 
 ## Supersedes
 

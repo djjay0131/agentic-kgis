@@ -132,8 +132,14 @@ route = policy.route(candidate.scores, decision.identity_disposition())
 
 `ResolutionDecision.identity_disposition()` maps `create_new_identity` →
 `NEW_IDENTITY`, a named `resolved_identity` → `RESOLVED_EXISTING`, and neither
-→ `UNRESOLVED`. (`create_new_identity=True` with a non-null
-`resolved_identity` is now a `ValidationError`: the two claims contradict.)
+→ `UNRESOLVED`.
+
+**Setting both fields is fine and is the expected shape for a new-identity
+decision.** `create_new_identity` is checked first, so a resolver that mints an
+identity and names the id it minted — which is what the executor needs to build
+the `CREATE_IDENTITY` payload — maps to `NEW_IDENTITY` and routes normally. No
+validation rejects the combination. (What `resolved_identity` *means* in that
+case is deliberately still undefined; see issue #47.)
 
 ### What did *not* get weaker
 

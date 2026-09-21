@@ -43,6 +43,27 @@ rolls nothing back. `GraphReadOptions.include_revoked` now exists and
 `test_revoked_record_visible_by_default` pinned the previous behaviour and
 named an ADR as the way to change it; ADR-0025 is that ADR.
 
+**A cross-repo near-miss worth keeping.** This change briefly carried a
+fail-closed narrowing on `ResolutionDecision` rejecting
+`create_new_identity=True` alongside a non-null `resolved_identity`. The
+`agentic-kgcs` agent caught it against the in-flight branch: it would have
+raised for **every** AUTO-routed entity candidate, because
+`kgcs.policy.ResolutionPolicy.resolve` sets both fields — trading a platform
+that plans nothing for a platform that raises. On inspection the validator
+was unsound independently of that: `kg_contracts` has no graph access, so it
+cannot tell a freshly minted identity id from a pre-existing one (both are
+`kg://<graph-id>/identity/<ulid>`), meaning the check fired on the legitimate
+case and could not detect the illegitimate one — *a check that cannot fail
+for the reason it names*, which is the exact defect class this work was
+guarding against. It was also incidental: `identity_disposition()` tests
+`create_new_identity` first, so the mapping was already total. Dropped, with
+the real question (what does `resolved_identity` mean when
+`create_new_identity` is True? spec §7.4 never says) filed as issue #47 for
+an owner ADR rather than settled by fiat inside a bug fix. Two tests now pin
+the KGCS shape so the validator cannot come back silently. General lesson:
+a narrowing that a consumer's normal output violates is a hypothesis about
+the contract, not a tightening of it — check the consumers first.
+
 **Verification note worth keeping.** 27 mutants, each run against its named
 tests alone with an unmutated control in every batch. One survived: the
 `curation_epoch`-preservation test also passed against a store that ignored

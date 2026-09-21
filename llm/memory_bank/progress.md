@@ -149,12 +149,16 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   `route()` takes an `IdentityDisposition`, and only a *new* identity's
   *absent* resolution score is excused; a stated low score, weak extraction,
   weak source and policy risk all still block, and `UNRESOLVED` is blocked
-  outright. (b) `CREATE_IDENTITY` had no inverse, so a committed curation run
+  outright. An interim `ResolutionDecision` validator in this work was caught
+  by the `agentic-kgcs` agent (it would have raised for every AUTO-routed
+  entity candidate) and dropped — it was unsound anyway, since the contract
+  cannot distinguish a minted identity id from a pre-existing one; the field's
+  meaning is issue #47. (b) `CREATE_IDENTITY` had no inverse, so a committed curation run
   was irreversible; added `REVOKE_IDENTITY` (tombstone, creation epoch
   preserved), `INVERSE_OPERATION_TYPES`, and `GraphReadOptions.include_revoked`
   with `REVOKED` hidden by default — without which the revoke would have had
-  no observable effect. 780 passed, ruff clean, `mypy --strict` clean (78
-  files). 27 mutants killed against named tests with an unmutated control;
+  no observable effect. 781 passed, ruff clean, `mypy --strict` clean (78
+  files). 28 mutants killed against named tests with an unmutated control;
   one survivor found and closed. KGCS must implement the compensator half
   (see the PR body). Follow-up: #45 (`PROMOTE_ONTOLOGY_TERM` has no inverse).
 
