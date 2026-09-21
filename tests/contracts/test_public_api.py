@@ -24,7 +24,7 @@ def test_top_level_exports() -> None:
         Assertion, CanonicalEntity, ConflictRecord, ConflictStatus,
         CurationStatus,
         # policy (T12)
-        AdjudicationRoute, ConfidencePolicy,
+        AdjudicationRoute, ConfidencePolicy, IdentityDisposition,
         # stores (T13, T15; ledger read surface ADR-0011)
         AdapterCapabilities, CandidateSink, CommitResult, GraphMutationBatch,
         GraphMutationStore, GraphReader, GraphReadOptions, LedgerEntry,
@@ -32,6 +32,7 @@ def test_top_level_exports() -> None:
         SubmissionResult, SubmissionStatus, TemporalGraphReader,
         UnsupportedCapabilityError,
         # curation (T14)
+        INVERSE_OPERATION_TYPES,
         AuditRecord, CurationOperation, CurationOperationType, CurationPlan,
         FailureKind, Precondition, ProcessingState, ResolutionDecision,
         ReviewAction, ReviewDecision, ReviewItem, ReviewQueue,

@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from kg_contracts.assertions import CurationStatus
 from kg_contracts.curation import (
+    INVERSE_OPERATION_TYPES,
     AuditRecord,
     CurationOperation,
     CurationOperationType,
@@ -20,7 +21,7 @@ from kg_contracts.curation import (
     ReviewQueue,
     ValidationDecision,
 )
-from kg_contracts.policy import AdjudicationRoute
+from kg_contracts.policy import AdjudicationRoute, IdentityDisposition
 
 NOW = datetime(2026, 7, 12, tzinfo=UTC)
 
@@ -358,3 +359,83 @@ def test_review_decision_edited_payload_is_frozen():
     )
     with pytest.raises(TypeError):
         decision.edited_payload["display_name"] = "other"  # type: ignore[index]
+
+
+# --- ADR-0024: ResolutionDecision projects onto the adjudication gate -------
+
+
+def _decision(**kw: object) -> ResolutionDecision:
+    base: dict[str, object] = dict(
+        candidate_id="cand_1",
+        resolved_identity=None,
+        create_new_identity=False,
+        route=AdjudicationRoute.LLM_ASSESS,
+        score_vector={"name_similarity": 0.9},
+        matcher_version="v1",
+        snapshot_version="17",
+        trace_id="trace_1",
+    )
+    base.update(kw)
+    return ResolutionDecision(**base)  # type: ignore[arg-type]
+
+
+def test_identity_disposition_resolved_existing():
+    decision = _decision(resolved_identity="kg://g1/identity/" + "0" * 26)
+    assert decision.identity_disposition() is IdentityDisposition.RESOLVED_EXISTING
+
+
+def test_identity_disposition_new_identity():
+    decision = _decision(create_new_identity=True)
+    assert decision.identity_disposition() is IdentityDisposition.NEW_IDENTITY
+
+
+def test_identity_disposition_abstention_is_unresolved():
+    # Neither an identity nor an instruction to mint one: the resolver
+    # abstained. That must never be read as a resolution.
+    decision = _decision()
+    assert decision.identity_disposition() is IdentityDisposition.UNRESOLVED
+
+
+def test_create_new_identity_forbids_a_resolved_identity():
+    # Fail-closed narrowing: the contradiction would otherwise map to
+    # NEW_IDENTITY and waive the resolution gate for a decision that says,
+    # in its other field, that it resolved.
+    with pytest.raises(ValidationError, match="resolved_identity"):
+        _decision(create_new_identity=True, resolved_identity="kg://g1/identity/" + "0" * 26)
+
+
+# --- ADR-0025: every operation type but one has a named inverse -------------
+
+
+def test_create_identity_and_revoke_identity_are_mutual_inverses():
+    # The defect: a plan of CREATE_IDENTITY operations used to compensate to
+    # nothing, because the vocabulary named no operation that reverses one.
+    assert (
+        INVERSE_OPERATION_TYPES[CurationOperationType.CREATE_IDENTITY]
+        is CurationOperationType.REVOKE_IDENTITY
+    )
+    assert (
+        INVERSE_OPERATION_TYPES[CurationOperationType.REVOKE_IDENTITY]
+        is CurationOperationType.CREATE_IDENTITY
+    )
+
+
+def test_every_operation_type_except_promote_ontology_term_has_an_inverse():
+    # Named exclusion, not a silent gap: PROMOTE_ONTOLOGY_TERM has no inverse
+    # yet (issue #45), and the map says so by omission rather than by a
+    # plausible-looking wrong entry.
+    missing = set(CurationOperationType) - set(INVERSE_OPERATION_TYPES)
+    assert missing == {CurationOperationType.PROMOTE_ONTOLOGY_TERM}
+
+
+def test_inverse_operation_types_is_an_involution():
+    # Applying the inverse twice returns the original operation type, so
+    # compensating a compensation replays the original work.
+    for op_type, inverse in INVERSE_OPERATION_TYPES.items():
+        assert inverse in INVERSE_OPERATION_TYPES, op_type
+        assert INVERSE_OPERATION_TYPES[inverse] is op_type
+
+
+def test_revoke_identity_is_a_member_of_the_operation_vocabulary():
+    assert CurationOperationType.REVOKE_IDENTITY.value == "REVOKE_IDENTITY"
+    assert "REVOKE_IDENTITY" in CurationOperationType.__members__

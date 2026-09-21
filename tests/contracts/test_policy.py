@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from kg_contracts.candidates import CandidateScores
-from kg_contracts.policy import AdjudicationRoute, ConfidencePolicy
+from kg_contracts.policy import AdjudicationRoute, ConfidencePolicy, IdentityDisposition
 
 
 def scores(**kw: float) -> CandidateScores:
@@ -102,3 +102,118 @@ def test_moderate_risk_good_extraction_routes_llm_assess():
     # never AUTO, even though extraction alone would have allowed AUTO.
     s = scores(policy_risk=0.4)
     assert ConfidencePolicy().route(s) is AdjudicationRoute.LLM_ASSESS
+
+
+# --- ADR-0024: the identity disposition is an input to the gate -------------
+#
+# Before ADR-0024, `route()` applied the existing-identity resolution gate to
+# every candidate, and nothing in kg_contracts/kgis/kg_eval ever produces an
+# `identity_confidence` — so no candidate any producer in this platform emits
+# could ever route AUTO. These tests pin both halves of the fix: the gate now
+# distinguishes "no resolution to be confident about" from "resolution
+# confidence unknown", and it does so WITHOUT letting a low stated score, a
+# weak extraction, or a risky candidate through.
+
+
+def test_identity_disposition_has_exactly_three_states():
+    assert {d.value for d in IdentityDisposition} == {
+        "RESOLVED_EXISTING",
+        "NEW_IDENTITY",
+        "UNRESOLVED",
+    }
+
+
+def test_route_defaults_to_resolved_existing():
+    # The disposition `route()` always assumed implicitly. Passing it
+    # explicitly must be indistinguishable from omitting it, or the fix
+    # would have silently re-routed every existing caller.
+    s = CandidateScores(extraction_confidence=0.99, source_reliability=0.99)
+    policy = ConfidencePolicy()
+    assert policy.route(s) is policy.route(s, IdentityDisposition.RESOLVED_EXISTING)
+    good = scores()
+    assert policy.route(good) is policy.route(good, IdentityDisposition.RESOLVED_EXISTING)
+
+
+def test_new_identity_routes_auto_without_an_identity_confidence():
+    # THE DEADLOCK FIX. A candidate minting a brand-new identity has no
+    # resolution to be confident about, so a missing identity_confidence is
+    # not-applicable rather than unknown, and must not block AUTO.
+    s = CandidateScores(extraction_confidence=0.99, source_reliability=0.99)
+    assert s.identity_confidence is None
+    assert (
+        ConfidencePolicy().route(s, IdentityDisposition.NEW_IDENTITY)
+        is AdjudicationRoute.AUTO
+    )
+
+
+def test_new_identity_with_a_low_stated_identity_confidence_does_not_route_auto():
+    # "Not applicable" excuses an ABSENT score, never a LOW one. Without this
+    # the fix would be a silent weakening: a resolver reporting 0.10 would be
+    # ignored simply because the candidate is minting a new identity.
+    s = CandidateScores(
+        extraction_confidence=0.99, source_reliability=0.99, identity_confidence=0.10
+    )
+    assert (
+        ConfidencePolicy().route(s, IdentityDisposition.NEW_IDENTITY)
+        is AdjudicationRoute.LLM_ASSESS
+    )
+
+
+def test_new_identity_does_not_bypass_the_extraction_gate():
+    # The identity dimension is the only one NEW_IDENTITY relaxes.
+    s = CandidateScores(extraction_confidence=0.85, source_reliability=0.99)
+    assert (
+        ConfidencePolicy().route(s, IdentityDisposition.NEW_IDENTITY)
+        is AdjudicationRoute.LLM_ASSESS
+    )
+
+
+def test_new_identity_does_not_bypass_the_source_reliability_gate():
+    s = CandidateScores(extraction_confidence=0.99, source_reliability=0.50)
+    assert (
+        ConfidencePolicy().route(s, IdentityDisposition.NEW_IDENTITY)
+        is AdjudicationRoute.LLM_ASSESS
+    )
+
+
+def test_new_identity_does_not_bypass_the_policy_risk_floor():
+    s = CandidateScores(
+        extraction_confidence=0.99, source_reliability=0.99, policy_risk=0.9
+    )
+    assert (
+        ConfidencePolicy().route(s, IdentityDisposition.NEW_IDENTITY)
+        is AdjudicationRoute.HUMAN
+    )
+
+
+def test_allow_auto_for_new_identity_is_config_not_code():
+    # An adopter that never wants an identity minted without oversight turns
+    # the relaxation off by config, and the SAME scores drop back to
+    # LLM_ASSESS with no code change (principle 9).
+    s = CandidateScores(extraction_confidence=0.99, source_reliability=0.99)
+    assert (
+        ConfidencePolicy().route(s, IdentityDisposition.NEW_IDENTITY)
+        is AdjudicationRoute.AUTO
+    )
+    strict = ConfidencePolicy(allow_auto_for_new_identity=False)
+    assert strict.route(s, IdentityDisposition.NEW_IDENTITY) is AdjudicationRoute.LLM_ASSESS
+
+
+def test_unresolved_blocks_auto_even_with_a_perfect_identity_confidence():
+    # UNRESOLVED means no resolver looked at this candidate. A hand-supplied
+    # identity_confidence cannot buy AUTO for a resolution that never
+    # happened — and this is exactly where UNRESOLVED and RESOLVED_EXISTING
+    # diverge observably, on identical scores.
+    s = scores(identity_confidence=0.99)
+    policy = ConfidencePolicy()
+    assert policy.route(s, IdentityDisposition.RESOLVED_EXISTING) is AdjudicationRoute.AUTO
+    assert policy.route(s, IdentityDisposition.UNRESOLVED) is AdjudicationRoute.LLM_ASSESS
+
+
+def test_disabling_the_gate_still_disables_it_for_every_disposition():
+    # require_identity_confidence_for_auto=False remains the master switch:
+    # with it clear, no disposition — not even UNRESOLVED — blocks AUTO.
+    s = CandidateScores(extraction_confidence=0.99, source_reliability=0.99)
+    policy = ConfidencePolicy(require_identity_confidence_for_auto=False)
+    for disposition in IdentityDisposition:
+        assert policy.route(s, disposition) is AdjudicationRoute.AUTO, disposition

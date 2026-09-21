@@ -43,7 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kg_contracts._frozen import FrozenDictFloat, FrozenDictObject
 from kg_contracts._ulid import new_ulid
-from kg_contracts.policy import AdjudicationRoute
+from kg_contracts.policy import AdjudicationRoute, IdentityDisposition
 
 
 class ProcessingState(StrEnum):
@@ -82,15 +82,74 @@ class FailureKind(StrEnum):
 
 
 class CurationOperationType(StrEnum):
-    """The kinds of compensable operation a `CurationPlan` may carry."""
+    """The kinds of compensable operation a `CurationPlan` may carry.
+
+    "Compensable" is load-bearing: every type here must have an inverse
+    *in this vocabulary*, or a plan containing it cannot be rolled back at
+    all. The pairing is:
+
+    | operation | inverse |
+    |---|---|
+    | `CREATE_IDENTITY` | `REVOKE_IDENTITY` |
+    | `REVOKE_IDENTITY` | `CREATE_IDENTITY` |
+    | `ATTACH_ASSERTION` | `RETRACT_ASSERTION` |
+    | `RETRACT_ASSERTION` | `ATTACH_ASSERTION` |
+    | `MERGE_IDENTITIES` | `SPLIT_IDENTITY` |
+    | `SPLIT_IDENTITY` | `MERGE_IDENTITIES` |
+    | `REASSIGN_ASSERTION` | `REASSIGN_ASSERTION` (endpoints swapped) |
+    | `PROMOTE_ONTOLOGY_TERM` | none yet — see issue #45 |
+
+    `REVOKE_IDENTITY` (ADR-0025) closes the `CREATE_IDENTITY` gap. It is a
+    **tombstone, not a deletion and not a supersession**: it sets
+    `CanonicalEntity.status` to `REVOKED` and leaves the record — and its
+    original `curation_epoch` — in place, so an epoch-scoped read still
+    finds the identity that was created. Supersession would have been
+    wrong twice over: nothing replaces a reversed identity, and
+    `GraphReadOptions.include_superseded` would then resurrect it in
+    exactly the history views that must show it as withdrawn.
+
+    Payloads (the shapes an executor must accept):
+
+    - `CREATE_IDENTITY` — a `CanonicalEntity` dump.
+    - `ATTACH_ASSERTION` — an `Assertion` dump.
+    - `REVOKE_IDENTITY` — `{"identity_id": <identity id>}`, plus an optional
+      `"reason"`. Deliberately *not* a whole entity dump: the executor
+      revokes the entity that is actually in the graph, so a stale copy in
+      the plan cannot overwrite it. The pre-revoke entity belongs in the
+      operation's `reversal_data`, which is what lets `REVOKE_IDENTITY`
+      itself be compensated by a `CREATE_IDENTITY`.
+    """
 
     CREATE_IDENTITY = "CREATE_IDENTITY"
+    REVOKE_IDENTITY = "REVOKE_IDENTITY"
     ATTACH_ASSERTION = "ATTACH_ASSERTION"
     MERGE_IDENTITIES = "MERGE_IDENTITIES"
     SPLIT_IDENTITY = "SPLIT_IDENTITY"
     REASSIGN_ASSERTION = "REASSIGN_ASSERTION"
     RETRACT_ASSERTION = "RETRACT_ASSERTION"
     PROMOTE_ONTOLOGY_TERM = "PROMOTE_ONTOLOGY_TERM"
+
+
+INVERSE_OPERATION_TYPES: dict[CurationOperationType, CurationOperationType] = {
+    CurationOperationType.CREATE_IDENTITY: CurationOperationType.REVOKE_IDENTITY,
+    CurationOperationType.REVOKE_IDENTITY: CurationOperationType.CREATE_IDENTITY,
+    CurationOperationType.ATTACH_ASSERTION: CurationOperationType.RETRACT_ASSERTION,
+    CurationOperationType.RETRACT_ASSERTION: CurationOperationType.ATTACH_ASSERTION,
+    CurationOperationType.MERGE_IDENTITIES: CurationOperationType.SPLIT_IDENTITY,
+    CurationOperationType.SPLIT_IDENTITY: CurationOperationType.MERGE_IDENTITIES,
+    CurationOperationType.REASSIGN_ASSERTION: CurationOperationType.REASSIGN_ASSERTION,
+}
+"""Which operation type compensates which (ADR-0025).
+
+The compensator itself lives in `agentic-kgcs` — this is the *vocabulary*
+half, published here so the two repos cannot disagree about which type
+reverses which, and so "is this operation compensable at all?" is a lookup
+against the contract rather than a judgement re-made in each executor.
+
+`PROMOTE_ONTOLOGY_TERM` is absent because it has no inverse yet (issue #45):
+absence here is the honest statement that a plan containing it is not fully
+compensable, not an oversight to be papered over with a plausible-looking
+entry."""
 
 
 class CurationOperation(BaseModel):
@@ -160,6 +219,12 @@ class ResolutionDecision(BaseModel):
 
     The full `score_vector` and `matcher_version`/`snapshot_version` are
     logged — a single stored final confidence cannot reproduce a decision.
+
+    `identity_disposition()` projects this decision onto the three-state
+    input `ConfidencePolicy.route()` needs (ADR-0024): this model is where
+    "did we link to an existing identity, mint a new one, or decide
+    nothing?" is already known, so the adjudication gate reads it from here
+    rather than each caller re-deriving it from two fields.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -178,6 +243,35 @@ class ResolutionDecision(BaseModel):
         if not self.score_vector:
             raise ValueError("score_vector must be non-empty")
         return self
+
+    @model_validator(mode="after")
+    def _check_new_identity_names_no_existing_one(self) -> "ResolutionDecision":
+        # Fail-closed narrowing (ADR-0021 pattern, ADR-0024): minting a new
+        # identity and naming an existing one it resolved to are mutually
+        # exclusive claims. Left representable, the contradiction would map
+        # to `NEW_IDENTITY` — waiving the resolution gate for a decision that
+        # says, in its other field, that it resolved.
+        if self.create_new_identity and self.resolved_identity is not None:
+            raise ValueError(
+                "create_new_identity=True forbids resolved_identity "
+                f"(got resolved_identity={self.resolved_identity!r})"
+            )
+        return self
+
+    def identity_disposition(self) -> IdentityDisposition:
+        """This decision as the identity input to `ConfidencePolicy.route()`.
+
+        `create_new_identity` wins outright (the validator above guarantees
+        it cannot also name a resolved identity). Otherwise a named
+        `resolved_identity` is `RESOLVED_EXISTING`; no identity and no
+        instruction to mint one is an abstention, which is `UNRESOLVED` —
+        never silently treated as a resolution.
+        """
+        if self.create_new_identity:
+            return IdentityDisposition.NEW_IDENTITY
+        if self.resolved_identity is None:
+            return IdentityDisposition.UNRESOLVED
+        return IdentityDisposition.RESOLVED_EXISTING
 
 
 class CurationPlan(BaseModel):
