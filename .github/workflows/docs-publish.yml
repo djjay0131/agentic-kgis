@@ -60,10 +60,10 @@ jobs:
       - name: Validate the manifest against the hub contract
         run: |
           curl -fsSL \
-            https://raw.githubusercontent.com/djjay0131/website/f98a928a1b92b2248b130822ba5098fb926b8898/contract/validate-manifest.mjs \
+            https://raw.githubusercontent.com/djjay0131/website/v1/contract/validate-manifest.mjs \
             -o /tmp/validate-manifest.mjs
           curl -fsSL \
-            https://raw.githubusercontent.com/djjay0131/website/f98a928a1b92b2248b130822ba5098fb926b8898/contract/manifest.schema.json \
+            https://raw.githubusercontent.com/djjay0131/website/v1/contract/manifest.schema.json \
             -o /tmp/manifest.schema.json
           node /tmp/validate-manifest.mjs --dist docs-site/dist --source kgis
 
@@ -87,7 +87,7 @@ jobs:
       # ---------------------------------------------------------------------
       - name: Publish to the research hub (gated)
         if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: djjay0131/website/contract/publish@f98a928a1b92b2248b130822ba5098fb926b8898 # main
+        uses: djjay0131/website/contract/publish@v1
         with:
           dist: docs-site/dist
           source: kgis
