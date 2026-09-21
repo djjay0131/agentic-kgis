@@ -208,7 +208,9 @@ transaction-time fields at all today and the memory store does no
 transaction-time filtering for them, so this is a larger bitemporal change
 than the defect requires. The audit stream already records when the revoke
 happened. Recorded here as a known limitation: an epoch-scoped read of the
-creation epoch finds the identity, but shows its *current* status.
+creation epoch (with `include_revoked=True` — no default read returns a
+revoked record at any epoch) finds the identity, but shows its *current*
+status.
 
 ## Consequences
 

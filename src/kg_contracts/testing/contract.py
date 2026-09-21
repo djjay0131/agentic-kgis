@@ -446,6 +446,26 @@ class GraphMutationStoreContract:
         assert stored.status is CurationStatus.REVOKED
         assert stored.curation_epoch == creation_epoch
 
+        # The cross term, and the property ADR-0025 argues hardest for:
+        # history must survive an EPOCH-SCOPED read. Asserting the epoch
+        # field alone does not establish that — an adapter can preserve the
+        # stamp and still fail to serve the record when the two options are
+        # combined, which is precisely how a rolled-back run would lose the
+        # history of what it rolled back.
+        as_of_creation = store.get_entity(
+            entity.identity_id,
+            options=GraphReadOptions(curation_epoch=creation_epoch, include_revoked=True),
+        )
+        assert as_of_creation is not None
+        assert as_of_creation.identity_id == entity.identity_id
+        # ... and the default read is still empty at that same epoch.
+        assert (
+            store.get_entity(
+                entity.identity_id, options=GraphReadOptions(curation_epoch=creation_epoch)
+            )
+            is None
+        )
+
     def test_snapshot_read_at_old_epoch_hides_later_records(self) -> None:
         store = _as_testable(self.make_store())
         entity = make_entity()

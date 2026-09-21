@@ -102,9 +102,12 @@ class CurationOperationType(StrEnum):
     `REVOKE_IDENTITY` (ADR-0025) closes the `CREATE_IDENTITY` gap. It is a
     **tombstone, not a deletion and not a supersession**: it sets
     `CanonicalEntity.status` to `REVOKED` and leaves the record — and its
-    original `curation_epoch` — in place, so an epoch-scoped read still
-    finds the identity that was created. Supersession would have been
-    wrong twice over: nothing replaces a reversed identity, and
+    original `curation_epoch` — in place, so an epoch-scoped read passing
+    `include_revoked=True` still finds the identity that was created. A
+    revoked record is returned by **no** default read, at any epoch:
+    preserving the epoch keeps it *findable on the history surface*, it
+    does not keep it *visible*. Supersession would have been wrong twice
+    over: nothing replaces a reversed identity, and
     `GraphReadOptions.include_superseded` would then resurrect it in
     exactly the history views that must show it as withdrawn.
 
