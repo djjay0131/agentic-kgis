@@ -396,12 +396,30 @@ def test_identity_disposition_abstention_is_unresolved():
     assert decision.identity_disposition() is IdentityDisposition.UNRESOLVED
 
 
-def test_create_new_identity_forbids_a_resolved_identity():
-    # Fail-closed narrowing: the contradiction would otherwise map to
-    # NEW_IDENTITY and waive the resolution gate for a decision that says,
-    # in its other field, that it resolved.
-    with pytest.raises(ValidationError, match="resolved_identity"):
-        _decision(create_new_identity=True, resolved_identity="kg://g1/identity/" + "0" * 26)
+def test_new_identity_decision_may_also_name_the_minted_identity():
+    # Issue #47: a resolver minting a new identity normally names the id it
+    # minted — the executor needs it to build the CREATE_IDENTITY payload —
+    # so create_new_identity=True ALONGSIDE resolved_identity is the
+    # expected shape, not a contradiction. `kgcs.policy.ResolutionPolicy`
+    # emits exactly this for every AUTO-routed entity candidate, so a
+    # contract that rejected it would break KGCS for every adopter.
+    minted = "kg://g1/identity/" + "0" * 26
+    decision = _decision(create_new_identity=True, resolved_identity=minted)
+    assert decision.resolved_identity == minted
+    assert decision.identity_disposition() is IdentityDisposition.NEW_IDENTITY
+
+
+def test_create_new_identity_wins_over_a_named_identity_in_the_disposition():
+    # The precedence that makes the both-set case unambiguous: whatever
+    # `resolved_identity` holds, an explicit instruction to mint decides the
+    # disposition. Without this ordering the both-set case would resolve to
+    # RESOLVED_EXISTING and re-impose the very gate ADR-0024 lifts.
+    both_set = _decision(
+        create_new_identity=True, resolved_identity="kg://g1/identity/" + "1" * 26
+    )
+    only_named = _decision(resolved_identity="kg://g1/identity/" + "1" * 26)
+    assert both_set.identity_disposition() is IdentityDisposition.NEW_IDENTITY
+    assert only_named.identity_disposition() is IdentityDisposition.RESOLVED_EXISTING
 
 
 # --- ADR-0025: every operation type but one has a named inverse -------------

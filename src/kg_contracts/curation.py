@@ -244,28 +244,26 @@ class ResolutionDecision(BaseModel):
             raise ValueError("score_vector must be non-empty")
         return self
 
-    @model_validator(mode="after")
-    def _check_new_identity_names_no_existing_one(self) -> "ResolutionDecision":
-        # Fail-closed narrowing (ADR-0021 pattern, ADR-0024): minting a new
-        # identity and naming an existing one it resolved to are mutually
-        # exclusive claims. Left representable, the contradiction would map
-        # to `NEW_IDENTITY` — waiving the resolution gate for a decision that
-        # says, in its other field, that it resolved.
-        if self.create_new_identity and self.resolved_identity is not None:
-            raise ValueError(
-                "create_new_identity=True forbids resolved_identity "
-                f"(got resolved_identity={self.resolved_identity!r})"
-            )
-        return self
-
     def identity_disposition(self) -> IdentityDisposition:
         """This decision as the identity input to `ConfidencePolicy.route()`.
 
-        `create_new_identity` wins outright (the validator above guarantees
-        it cannot also name a resolved identity). Otherwise a named
-        `resolved_identity` is `RESOLVED_EXISTING`; no identity and no
-        instruction to mint one is an abstention, which is `UNRESOLVED` —
-        never silently treated as a resolution.
+        `create_new_identity` wins outright, and it wins **even when
+        `resolved_identity` is also set**. A resolver that mints a new
+        identity normally has to name the id it minted — the executor needs
+        it to build the `CREATE_IDENTITY` payload — so setting both fields
+        is the expected shape for a new-identity decision, not a
+        contradiction (issue #47).
+
+        Otherwise a named `resolved_identity` is `RESOLVED_EXISTING`; no
+        identity and no instruction to mint one is an abstention, which is
+        `UNRESOLVED` — never silently treated as a resolution.
+
+        This method deliberately does **not** try to reject
+        `create_new_identity=True` alongside a `resolved_identity` that
+        names a pre-existing entity. `kg_contracts` holds no graph access,
+        so it cannot tell a freshly minted identity id from an existing one
+        — both are `kg://<graph-id>/identity/<ulid>`. A check here would
+        fire on the legitimate case and still miss the illegitimate one.
         """
         if self.create_new_identity:
             return IdentityDisposition.NEW_IDENTITY
