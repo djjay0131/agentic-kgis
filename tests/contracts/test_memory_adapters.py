@@ -313,6 +313,54 @@ def test_revoke_identity_preserves_the_creation_epoch():
     assert as_of_creation.status is CurationStatus.REVOKED
 
 
+def test_revoke_round_trip_restores_the_identity_but_not_its_creation_epoch():
+    # Pins a KNOWN BOUND, not a desired property (issue #51, ADR-0025).
+    # INVERSE_OPERATION_TYPES[REVOKE_IDENTITY] is CREATE_IDENTITY, which
+    # restores status and visibility but re-stamps curation_epoch, because
+    # CREATE_IDENTITY means "came into existence now". So the reverse leg
+    # LOSES the original creation epoch even though the forward leg preserves
+    # it. This test exists so the ADR cannot quietly imply a round-trip
+    # property the vocabulary does not have, and so a future RESTORE_IDENTITY
+    # has a failing test to flip.
+    store = MemoryGraphStore()
+    entity = make_entity(identity_id=new_identity_id("g1"))
+
+    created = store.apply(_create_identity_batch("pl_create", entity), preconditions=())
+    creation_epoch = created.new_epoch
+    assert creation_epoch is not None
+
+    store.apply(_revoke_identity_batch("pl_undo", entity), preconditions=())
+    revoked = store.get_entity(
+        entity.identity_id, options=GraphReadOptions(include_revoked=True)
+    )
+    assert revoked is not None
+    assert revoked.curation_epoch == creation_epoch  # forward leg: preserved
+
+    # Compensate the revoke from its own `reversal_data` — the PRE-revoke
+    # (ACTIVE) dump, which is what ADR-0025 prescribes reversal_data carries.
+    # Replaying the post-revoke copy instead would restore it still REVOKED.
+    restored_result = store.apply(
+        _create_identity_batch("pl_redo", entity), preconditions=()
+    )
+    assert restored_result.committed is True
+
+    restored = store.get_entity(entity.identity_id)
+    assert restored is not None
+    assert restored.status is CurationStatus.ACTIVE  # status IS restored ...
+    assert restored.curation_epoch != creation_epoch  # ... the epoch is NOT
+    assert restored.curation_epoch == restored_result.new_epoch
+
+    # The consequence that matters: the identity is no longer findable as of
+    # the epoch that originally created it.
+    assert (
+        store.get_entity(
+            entity.identity_id,
+            options=GraphReadOptions(curation_epoch=creation_epoch, include_revoked=True),
+        )
+        is None
+    )
+
+
 def test_revoke_identity_of_an_unknown_identity_does_not_commit():
     store = MemoryGraphStore()
     known = make_entity(identity_id=new_identity_id("g1"))

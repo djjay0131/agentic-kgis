@@ -149,7 +149,26 @@ against the contract rather than a judgement re-made in each executor.
 `PROMOTE_ONTOLOGY_TERM` is absent because it has no inverse yet (issue #45):
 absence here is the honest statement that a plan containing it is not fully
 compensable, not an oversight to be papered over with a plausible-looking
-entry."""
+entry.
+
+**This map answers "what type reverses this type", not "can this plan be
+rolled back today".** Membership here is a statement about the *vocabulary*.
+Whether an executor can actually apply a given type is a separate question
+with a different answer per adapter — the reference `MemoryGraphStore`
+implements only `CREATE_IDENTITY`, `ATTACH_ASSERTION` and `REVOKE_IDENTITY`,
+and raises `NotImplementedError` (Plan 3) for the rest. A caller checking
+compensability must consult both.
+
+**Known bound on `REVOKE_IDENTITY` -> `CREATE_IDENTITY` (issue #51).** That
+direction restores the identity's *status and visibility*, but not its
+original `curation_epoch`: `CREATE_IDENTITY` means "this identity came into
+existence now" and stamps the committing epoch, so a create-revoke-restore
+round trip returns the identity `ACTIVE` at a *new* epoch and an epoch-scoped
+read of the original creation epoch no longer finds it. The
+`CREATE_IDENTITY` -> `REVOKE_IDENTITY` direction — the one ADR-0025 exists to
+provide — is epoch-preserving and has no such bound. A true un-revoke
+(`REVOKED @ E` -> `ACTIVE @ E`) needs a `RESTORE_IDENTITY` type; that is
+issue #51, not this change."""
 
 
 class CurationOperation(BaseModel):

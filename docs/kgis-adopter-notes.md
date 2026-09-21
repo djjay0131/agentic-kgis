@@ -162,11 +162,26 @@ compensated at all. `REVOKE_IDENTITY` closes the gap.
   revoke is itself compensable by a `CREATE_IDENTITY`.
 - **Effect**: a tombstone. `CanonicalEntity.status` becomes `REVOKED`; the
   record is retained and keeps its **original** `curation_epoch`, so an
-  epoch-scoped read of the epoch that created the identity still finds it.
-  Nothing is deleted and nothing is superseded.
+  epoch-scoped read of the epoch that created the identity still finds it —
+  **with `include_revoked=True`**. A revoked record is never returned by a
+  default read at *any* epoch; preserving the epoch keeps it findable on the
+  history surface, it does not keep it visible. Nothing is deleted and
+  nothing is superseded.
 - **Pairing**: `kg_contracts.INVERSE_OPERATION_TYPES` publishes which operation
   type compensates which. `PROMOTE_ONTOLOGY_TERM` is deliberately absent — it
-  still has no inverse (issue #45).
+  still has no inverse (issue #45). The map answers *"what type reverses this
+  type"*, **not** *"can this plan be rolled back today"*: whether an executor
+  can apply a given type is per-adapter, and the reference `MemoryGraphStore`
+  implements only `CREATE_IDENTITY`, `ATTACH_ASSERTION` and `REVOKE_IDENTITY`.
+- **Known bound (issue #51)**: compensating in the *other* direction —
+  `REVOKE_IDENTITY` undone by `CREATE_IDENTITY` from `reversal_data` — restores
+  status and visibility but **not** the original `curation_epoch`, because
+  `CREATE_IDENTITY` stamps the committing epoch by design. A
+  create-revoke-restore round trip returns the identity `ACTIVE` at a *new*
+  epoch. The direction this release exists to provide (`CREATE_IDENTITY`
+  compensated by `REVOKE_IDENTITY`) is epoch-preserving and has no such bound.
+- **`reversal_data` carries the PRE-revoke (`ACTIVE`) entity dump.** Replaying
+  the post-revoke copy would restore the identity still `REVOKED`.
 
 ### Read-semantics change — check this one
 
@@ -186,6 +201,17 @@ You must handle `REVOKE_IDENTITY`. `MemoryGraphStore.apply()` is the reference
 implementation: preserve `curation_epoch`, change only `status`, and refuse to
 commit (`committed=False` with an `error`) when the named identity does not
 exist rather than silently skipping it.
+
+**You must also re-run the conformance suite.** `GraphMutationStoreContract`
+(`kg_contracts.testing.contract`) gained three tests in 0.3.0 —
+`test_revoked_assertions_hidden_by_default_visible_with_flag`,
+`test_include_superseded_and_include_revoked_are_independent`, and
+`test_revoke_identity_hides_entity_and_preserves_creation_epoch`. Before
+0.3.0 the suite pinned `include_superseded` but said nothing about
+`include_revoked`, so an adapter could pass conformance while serving
+withdrawn records on ordinary reads. If your adapter ignores `include_revoked`,
+or collapses it and `include_superseded` into one "show everything" flag, it
+now **fails conformance** instead of passing quietly.
 
 ### Pinning
 

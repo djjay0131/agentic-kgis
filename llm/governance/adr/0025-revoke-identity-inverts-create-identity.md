@@ -86,7 +86,10 @@ retractions it did not ask for.
 History is preserved, not hidden: nothing is deleted, the record keeps its
 original `curation_epoch`, and `include_revoked=True` is the history surface
 that returns it — including under an epoch-scoped read of the creation
-epoch. *When* and *by whom* a revoke happened lives in the audit stream
+epoch. To be exact: a revoked record is returned by **no** default read, at
+any epoch. Preserving the epoch keeps it *findable on the history surface*;
+it does not keep it *visible*. Every read that returns a revoked record
+passes `include_revoked=True`. *When* and *by whom* a revoke happened lives in the audit stream
 (`AuditRecord`), which is where operation-level transaction time belongs;
 `CanonicalEntity` carries no `revoked_at` and this ADR does not add one.
 
@@ -99,6 +102,59 @@ canonical read returns none of them and `include_revoked=True` returns all 8,
 each `REVOKED`, each at its creation epoch. A `REVOKE_IDENTITY` naming an
 unknown identity, or carrying no string `identity_id`, does not commit and
 leaves the store untouched.
+
+### 5. Conformance coverage
+
+`GraphMutationStoreContract` — the published suite every adapter must pass —
+pinned `include_superseded` but said nothing about `include_revoked`. An
+adapter could therefore pass conformance while serving withdrawn records on
+ordinary reads: the write side of this ADR fails loudly (a new enum member an
+executor does not handle), but the read side would have failed **quietly**.
+Three tests close it:
+
+- `test_revoked_assertions_hidden_by_default_visible_with_flag` — the mirror
+  of the existing SUPERSEDED test.
+- `test_include_superseded_and_include_revoked_are_independent` — the cross
+  terms, which is what catches an adapter that collapses both switches into
+  one "show everything" flag; such an adapter passes either single-flag test
+  on its own.
+- `test_revoke_identity_hides_entity_and_preserves_creation_epoch` — the
+  rollback property itself, including that the epoch is left alone.
+
+A published conformance suite that cannot detect a violation of the contract
+it publishes is the same defect class this ADR's second half exists to fix,
+so the suite moves with the contract.
+
+### 6. A known bound: the reverse leg loses the creation epoch (issue #51)
+
+`INVERSE_OPERATION_TYPES[REVOKE_IDENTITY]` is `CREATE_IDENTITY`. That is
+correct for *status and visibility* and **wrong for the epoch**:
+
+```
+CREATE_IDENTITY   -> ACTIVE  @ epoch 1
+REVOKE_IDENTITY   -> REVOKED @ epoch 1   (preserved, as this ADR requires)
+CREATE_IDENTITY   -> ACTIVE  @ epoch 3   (original creation epoch LOST)
+  (from reversal_data)
+```
+
+After the round trip an epoch-scoped read at the original creation epoch no
+longer finds the identity — the very failure the epoch-preservation rule
+above exists to prevent, reappearing on the other leg. The cause is that
+`CREATE_IDENTITY` means "this identity came into existence now" and stamps
+the committing epoch by design, which is right for a genuine create and wrong
+for restoring a tombstone; un-revoking is a status flip back
+(`REVOKED @ E` -> `ACTIVE @ E`), not a create.
+
+**This ADR does not claim a full round-trip property, and must not be read as
+implying one.** The direction it exists to provide — `CREATE_IDENTITY`
+compensated by `REVOKE_IDENTITY`, which is issue #44 — is epoch-preserving
+and holds. The reverse direction is bounded as above, pinned by
+`test_revoke_round_trip_restores_the_identity_but_not_its_creation_epoch` so
+the bound cannot rot into an assumed guarantee, and a proper
+`RESTORE_IDENTITY` type is issue #51.
+
+Note also that `reversal_data` must carry the **pre-revoke (`ACTIVE`)** entity
+dump; replaying a post-revoke copy restores the identity still `REVOKED`.
 
 ## Rationale
 
@@ -177,6 +233,10 @@ creation epoch finds the identity, but shows its *current* status.
   behaviour and named an ADR as the way to change it; this is that ADR.
 - A revoked identity's status is its current status under every epoch-scoped
   read, not its status as of that epoch (see the deferred alternative).
+- Compensating a `REVOKE_IDENTITY` restores status and visibility but not the
+  original `curation_epoch` (§6 above, issue #51).
+- Adapters must now pass three additional conformance tests; one of them
+  requires implementing `REVOKE_IDENTITY`.
 
 ### Risks
 
@@ -203,7 +263,10 @@ creation epoch finds the identity, but shows its *current* status.
 
 ## Related Issues / PRs
 
-- Issue #44; follow-up issue #45 (`PROMOTE_ONTOLOGY_TERM` has no inverse)
+- Issue #44; follow-up issues #45 (`PROMOTE_ONTOLOGY_TERM` has no inverse),
+  #48 (`INVERSE_OPERATION_TYPES` is mutable), #49 (a revoked identity's
+  assertions stay visible), #50 (single-batch ordering; double revoke),
+  #51 (no `RESTORE_IDENTITY`: the reverse leg loses the creation epoch)
 
 ## Supersedes
 
