@@ -31,15 +31,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
 
       - name: Install docs dependencies
         run: uv sync --extra docs
@@ -53,17 +53,17 @@ jobs:
         run: cp docs-site/manifest.json docs-site/dist/manifest.json
 
       - name: Set up Node (for the contract validator)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
 
       - name: Validate the manifest against the hub contract
         run: |
           curl -fsSL \
-            https://raw.githubusercontent.com/djjay0131/website/main/contract/validate-manifest.mjs \
+            https://raw.githubusercontent.com/djjay0131/website/f98a928a1b92b2248b130822ba5098fb926b8898/contract/validate-manifest.mjs \
             -o /tmp/validate-manifest.mjs
           curl -fsSL \
-            https://raw.githubusercontent.com/djjay0131/website/main/contract/manifest.schema.json \
+            https://raw.githubusercontent.com/djjay0131/website/f98a928a1b92b2248b130822ba5098fb926b8898/contract/manifest.schema.json \
             -o /tmp/manifest.schema.json
           node /tmp/validate-manifest.mjs --dist docs-site/dist --source kgis
 
@@ -87,7 +87,7 @@ jobs:
       # ---------------------------------------------------------------------
       - name: Publish to the research hub (gated)
         if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: djjay0131/website/contract/publish@main
+        uses: djjay0131/website/contract/publish@f98a928a1b92b2248b130822ba5098fb926b8898 # main
         with:
           dist: docs-site/dist
           source: kgis
