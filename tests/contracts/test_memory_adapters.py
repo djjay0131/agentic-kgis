@@ -293,10 +293,14 @@ def test_revoke_identity_preserves_the_creation_epoch():
     assert revoked.new_epoch is not None
     assert revoked.new_epoch > creation_epoch  # the revoke is its own epoch
 
+    # The revoke must actually have landed — asserting the epoch alone would
+    # also hold for a store that ignored the operation entirely.
+    assert store.get_entity(entity.identity_id) is None
     stored = store.get_entity(
         entity.identity_id, options=GraphReadOptions(include_revoked=True)
     )
     assert stored is not None
+    assert stored.status is CurationStatus.REVOKED
     assert stored.curation_epoch == creation_epoch
 
     # ... and the record is still reachable reading AS OF the creation epoch.
@@ -306,6 +310,7 @@ def test_revoke_identity_preserves_the_creation_epoch():
     )
     assert as_of_creation is not None
     assert as_of_creation.identity_id == entity.identity_id
+    assert as_of_creation.status is CurationStatus.REVOKED
 
 
 def test_revoke_identity_of_an_unknown_identity_does_not_commit():
