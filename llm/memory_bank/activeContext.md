@@ -1,5 +1,129 @@
 # Active Context — agentic-kgis
 
+Update 2026-09-21: **two platform defects that made the deterministic
+curation core unusable as shipped** (issues #43/#44, ADR-0024/ADR-0025,
+version 0.2.1 → 0.3.0). Both were surfaced by the `agentic-kg` adopter
+wiring its curation pipeline, and both were re-verified here before any code
+moved.
+
+**#43 — the adjudication deadlock.** `ConfidencePolicy.route()` took only a
+`CandidateScores` and refused `AUTO` without `identity_confidence >= 0.95`.
+Nothing in `kg_contracts`, `kgis` or `kg_eval` produces that score:
+`SourceScoring.to_scores()` is the only `CandidateScores` construction site
+in production code and never sets it, the LLM extractor updates only
+`extraction_confidence`, and the sole remaining writer is
+`kg_contracts.testing.factories` — a test double. Measured here: a real
+`IngestPipeline` run over 90 rows emits 270 candidates and routes **0** of
+them `AUTO`; the most generous scoring the platform can express changes
+nothing; flipping `require_identity_confidence_for_auto` alone flips all 270.
+So *every* adopter's deterministic core planned nothing, on any corpus.
+
+The fix treats it as a **contract bug, not a missing producer**. Resolution
+confidence is confidence in a resolution; a candidate minting a brand-new
+identity has no resolution to be confident about, and KGIS structurally
+cannot produce the number anyway (no graph read surface, ADR-0010) — anything
+it emitted would be a fabricated score. `route()` now takes an
+`IdentityDisposition` (`RESOLVED_EXISTING` default, `NEW_IDENTITY`,
+`UNRESOLVED`); only an absent score on a `NEW_IDENTITY` is excused, a stated
+low score still blocks, extraction/source/risk gates are untouched, and
+`UNRESOLVED` is now blocked outright — strictly stronger than before.
+`ResolutionDecision.identity_disposition()` does the mapping so no caller
+derives it by hand.
+
+**#44 — `CREATE_IDENTITY` had no inverse,** so a committed run of creations
+compensated to nothing. Added `REVOKE_IDENTITY` (a tombstone: status
+`REVOKED`, record retained, **original `curation_epoch` preserved** — moving
+it would make the identity vanish from epoch-scoped reads of the epoch that
+created it) plus `INVERSE_OPERATION_TYPES`, which names the pairing for KGCS
+and leaves `PROMOTE_ONTOLOGY_TERM` deliberately absent (issue #45). The
+second half matters as much: `_is_visible` left `REVOKED` records visible by
+default, so a revoke would have changed nothing observable — a rollback that
+rolls nothing back. `GraphReadOptions.include_revoked` now exists and
+`REVOKED` is hidden by default, superseding ADR-0006 in part. The old
+`test_revoked_record_visible_by_default` pinned the previous behaviour and
+named an ADR as the way to change it; ADR-0025 is that ADR.
+
+**A cross-repo near-miss worth keeping.** This change briefly carried a
+fail-closed narrowing on `ResolutionDecision` rejecting
+`create_new_identity=True` alongside a non-null `resolved_identity`. The
+`agentic-kgcs` agent caught it against the in-flight branch: it would have
+raised for **every** AUTO-routed entity candidate, because
+`kgcs.policy.ResolutionPolicy.resolve` sets both fields — trading a platform
+that plans nothing for a platform that raises. On inspection the validator
+was unsound independently of that: `kg_contracts` has no graph access, so it
+cannot tell a freshly minted identity id from a pre-existing one (both are
+`kg://<graph-id>/identity/<ulid>`), meaning the check fired on the legitimate
+case and could not detect the illegitimate one — *a check that cannot fail
+for the reason it names*, which is the exact defect class this work was
+guarding against. It was also incidental: `identity_disposition()` tests
+`create_new_identity` first, so the mapping was already total. Dropped, with
+the real question (what does `resolved_identity` mean when
+`create_new_identity` is True? spec §7.4 never says) filed as issue #47 for
+an owner ADR rather than settled by fiat inside a bug fix. Two tests now pin
+the KGCS shape so the validator cannot come back silently. General lesson:
+a narrowing that a consumer's normal output violates is a hypothesis about
+the contract, not a tightening of it — check the consumers first.
+
+**Two amendments from adversarial review (both should-fix, review returned
+APPROVE).** (1) `GraphMutationStoreContract` — the suite every adapter must
+pass — pinned `include_superseded` but had no `include_revoked` coverage, so
+an adapter could pass conformance while silently serving withdrawn records on
+ordinary reads. ADR-0025's "failure is loud" argument only ever covered the
+write side; the read side failed quietly, and the downstream adopter's
+`Neo4jCanonicalGraphStore` would have inherited the hole. Three tests added,
+the load-bearing one being the *cross terms* — an adapter that collapses
+`include_superseded` and `include_revoked` into one "show everything" flag
+passes either single-flag test on its own. General lesson: **a published
+conformance suite that cannot detect a violation of the contract it publishes
+is the same defect class as a test that verifies nothing.** When a contract
+moves, the suite moves with it.
+
+(2) The revoke round trip loses the creation epoch: CREATE @1 → REVOKE (epoch
+preserved) → CREATE_IDENTITY from `reversal_data` → back ACTIVE @3, and the
+epoch-scoped read at the original creation epoch no longer finds it — the
+exact failure ADR-0025 preserves the epoch to prevent, on the other leg.
+Cause: `CREATE_IDENTITY` means "came into existence now" and stamps the
+committing epoch, which is right for a create and wrong for restoring a
+tombstone. Taken as *state the bound* rather than *fix it* — and re-review then
+produced a stronger result than that choice deserved: **the obvious cheap fix
+is provably wrong.** Letting `CREATE_IDENTITY` honour a payload
+`curation_epoch` reddens three tests, two of them on the *forward* leg,
+because stamping the committing epoch is exactly what makes a created
+identity belong to the epoch that created it — a payload-wins rule stops
+`CREATE_IDENTITY` assigning epochs at all and lets callers forge them. So the
+record now says "this cannot be fixed this way", not "we chose not to fix
+this now", which is a far better handover for whoever picks up #51. General
+lesson: when deferring a fix, measure the tempting shortcut too — the
+strongest form of a deferral is proof that the cheap repair is unsound. Documented in ADR-0025 §6
+and the `INVERSE_OPERATION_TYPES` docstring, pinned by a test, with mutant B1
+proving that test is not vacuous. The direction the PR exists to provide is
+epoch-preserving and holds.
+
+**Third review pass — conformance coverage is a property to test, not a box
+to tick.** Two residual flagless claims about epoch-scoped reads survived the
+Amendment-1 sweep, one of them in `curation.py`'s `CurationOperationType`
+docstring — the highest-traffic text in the repo, since it is what IDE hover
+shows every adopter. Corrected, and a repo-wide sweep now shows no residue.
+More interesting: the published suite asserted the `curation_epoch` *field*
+after a revoke but never combined `curation_epoch=` with `include_revoked` on
+a *read*, so "history survives an epoch-scoped read" — the property ADR-0025
+argues hardest for — was unenforced cross-adapter. An adapter can preserve
+the stamp and still drop the record when the two options combine. Verified
+the cross term is load-bearing the same way the independence test was: built
+the exploiting adapter, confirmed it **passes** with the cross term removed
+and **fails** with it present. Asserting a field is not asserting the
+behaviour the field exists to support.
+
+**Verification note worth keeping.** 27 mutants, each run against its named
+tests alone with an unmutated control in every batch. One survived: the
+`curation_epoch`-preservation test also passed against a store that ignored
+`REVOKE_IDENTITY` entirely, because `include_revoked=True` returns `ACTIVE`
+records too — the assertion could not distinguish "revoked, epoch kept" from
+"never revoked". Strengthened to assert the default read no longer returns
+the entity and the stored status is `REVOKED`; the mutant then died. Also a
+process lesson: `git checkout -- <file>` restores from HEAD, so mutation
+testing against *uncommitted* work silently deletes it. Commit first.
+
 Update 2026-09-18: **`import kgis` was broken for every consumer without the
 `[dev]` extra** (issue #37, PR #39, version bumped 0.2.0 → 0.2.1).
 `kgis/evidence/__init__.py` eagerly imported `kgis/evidence/contract.py`, a

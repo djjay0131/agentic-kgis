@@ -131,3 +131,12 @@ canonical-only, and ledger visibility is a separate `LedgerReader` surface. The
 three-store separation, curation epochs, and every other `GraphReadOptions`
 field stand unchanged; ADR-0011 follows directly from this ADR's own "never one
 access path" principle.
+
+ADR-0025, in part — the canonical read surface's status visibility. This ADR's
+`GraphReadOptions` exposed `include_superseded` as the only status filter, and
+`REVOKED` records were consequently visible on every canonical read.
+`REVOKED` is now hidden by default and revealed by a second, independent
+`include_revoked` flag, so that `CurationOperationType.REVOKE_IDENTITY` — the
+inverse of `CREATE_IDENTITY` — has an observable effect. The three-store
+separation, curation epochs, and every other `GraphReadOptions` field stand
+unchanged.

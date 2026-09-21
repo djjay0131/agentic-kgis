@@ -75,6 +75,17 @@ class GraphReadOptions(BaseModel):
     consume a published epoch, never "whatever is present", so one query can
     never observe a partially promoted batch.
 
+    `include_superseded` and `include_revoked` are two separate switches
+    over two separate `CurationStatus` values (ADR-0025), and neither
+    reveals the other: a record replaced by a newer one and a record
+    withdrawn outright are different facts, and a consumer asking to see
+    graph history must not thereby be shown retractions it did not ask for
+    (or the reverse). Both default False, so an ordinary canonical read
+    sees `ACTIVE` records only. Neither flag deletes anything: a `REVOKED`
+    record is retained at its original `curation_epoch` and is always
+    reachable with `include_revoked=True` — that is the history surface for
+    a rolled-back curation run (`CurationOperationType.REVOKE_IDENTITY`).
+
     There is deliberately **no** ledger-visibility option here (ADR-0011,
     correcting ADR-0006's original field list). Under ADR-0006 the canonical
     graph contains only accepted records; uncertain candidates "never appear
@@ -91,6 +102,7 @@ class GraphReadOptions(BaseModel):
     valid_at: datetime | None = None
     transaction_at: datetime | None = None
     include_superseded: bool = False
+    include_revoked: bool = False
     minimum_evidence_policy: str | None = None
 
 

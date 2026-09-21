@@ -77,6 +77,14 @@ def _attach_assertion_op(assertion: Assertion) -> CurationOperation:
     )
 
 
+def _revoke_identity_op(entity: CanonicalEntity) -> CurationOperation:
+    return CurationOperation(
+        type=CurationOperationType.REVOKE_IDENTITY,
+        payload={"identity_id": entity.identity_id},
+        reversal_data=entity.model_dump(mode="python"),
+    )
+
+
 class MemoryReviewQueue:
     """List-backed reference `ReviewQueue` (spec §7.6).
 
@@ -311,6 +319,152 @@ class GraphMutationStoreContract:
             active.assertion_id,
             superseded.assertion_id,
         }
+
+    def test_revoked_assertions_hidden_by_default_visible_with_flag(self) -> None:
+        # ADR-0025. The mirror of the SUPERSEDED test above, and the reason it
+        # exists: `include_revoked` is a read rule every adapter must honour,
+        # so an adapter that ignores it must FAIL conformance rather than pass
+        # it while silently serving withdrawn records on ordinary reads.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        store.apply(
+            GraphMutationBatch(plan_id="pl_1", operations=(_create_identity_op(entity),)),
+            preconditions=(),
+        )
+
+        active = make_assertion(
+            subject_identity=entity.identity_id, predicate="height_cm", object_value=200
+        )
+        revoked = make_assertion(
+            subject_identity=entity.identity_id,
+            predicate="height_cm",
+            object_value=195,
+            status=CurationStatus.REVOKED,
+        )
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_2",
+                operations=(_attach_assertion_op(active), _attach_assertion_op(revoked)),
+            ),
+            preconditions=(),
+        )
+
+        default_read = store.assertions_for(entity.identity_id)
+        assert [a.assertion_id for a in default_read] == [active.assertion_id]
+
+        full_read = store.assertions_for(
+            entity.identity_id, options=GraphReadOptions(include_revoked=True)
+        )
+        assert {a.assertion_id for a in full_read} == {
+            active.assertion_id,
+            revoked.assertion_id,
+        }
+
+    def test_include_superseded_and_include_revoked_are_independent(self) -> None:
+        # ADR-0025: two switches over two different statuses, and neither may
+        # reveal the other's records. An adapter that collapsed them into one
+        # "show me everything" flag would pass both single-flag tests above
+        # and fail here — which is the point of asserting the cross terms.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        store.apply(
+            GraphMutationBatch(plan_id="pl_1", operations=(_create_identity_op(entity),)),
+            preconditions=(),
+        )
+
+        active = make_assertion(subject_identity=entity.identity_id, object_value=200)
+        superseded = make_assertion(
+            subject_identity=entity.identity_id,
+            object_value=195,
+            status=CurationStatus.SUPERSEDED,
+            superseded_at=NOW,
+        )
+        revoked = make_assertion(
+            subject_identity=entity.identity_id,
+            object_value=190,
+            status=CurationStatus.REVOKED,
+        )
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_2",
+                operations=(
+                    _attach_assertion_op(active),
+                    _attach_assertion_op(superseded),
+                    _attach_assertion_op(revoked),
+                ),
+            ),
+            preconditions=(),
+        )
+
+        def ids(*, superseded_flag: bool = False, revoked_flag: bool = False) -> set[str]:
+            options = GraphReadOptions(
+                include_superseded=superseded_flag, include_revoked=revoked_flag
+            )
+            return {
+                a.assertion_id
+                for a in store.assertions_for(entity.identity_id, options=options)
+            }
+
+        assert ids() == {active.assertion_id}
+        # include_superseded must NOT reveal the revoked record ...
+        assert ids(superseded_flag=True) == {active.assertion_id, superseded.assertion_id}
+        # ... and include_revoked must NOT reveal the superseded one.
+        assert ids(revoked_flag=True) == {active.assertion_id, revoked.assertion_id}
+        assert ids(superseded_flag=True, revoked_flag=True) == {
+            active.assertion_id,
+            superseded.assertion_id,
+            revoked.assertion_id,
+        }
+
+    def test_revoke_identity_hides_entity_and_preserves_creation_epoch(self) -> None:
+        # ADR-0025, the rollback contract an adapter must honour for a
+        # committed curation run to be reversible: REVOKE_IDENTITY removes the
+        # identity from ordinary reads, retains the record, and leaves its
+        # ORIGINAL curation_epoch alone. Advancing the epoch would make the
+        # identity vanish from epoch-scoped reads of the epoch that created it.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        created = store.apply(
+            GraphMutationBatch(plan_id="pl_1", operations=(_create_identity_op(entity),)),
+            preconditions=(),
+        )
+        creation_epoch = created.new_epoch
+        assert creation_epoch is not None
+        assert store.get_entity(entity.identity_id) is not None
+
+        revoked = store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        )
+        assert revoked.committed is True
+
+        assert store.get_entity(entity.identity_id) is None
+        stored = store.get_entity(
+            entity.identity_id, options=GraphReadOptions(include_revoked=True)
+        )
+        assert stored is not None
+        assert stored.status is CurationStatus.REVOKED
+        assert stored.curation_epoch == creation_epoch
+
+        # The cross term, and the property ADR-0025 argues hardest for:
+        # history must survive an EPOCH-SCOPED read. Asserting the epoch
+        # field alone does not establish that — an adapter can preserve the
+        # stamp and still fail to serve the record when the two options are
+        # combined, which is precisely how a rolled-back run would lose the
+        # history of what it rolled back.
+        as_of_creation = store.get_entity(
+            entity.identity_id,
+            options=GraphReadOptions(curation_epoch=creation_epoch, include_revoked=True),
+        )
+        assert as_of_creation is not None
+        assert as_of_creation.identity_id == entity.identity_id
+        # ... and the default read is still empty at that same epoch.
+        assert (
+            store.get_entity(
+                entity.identity_id, options=GraphReadOptions(curation_epoch=creation_epoch)
+            )
+            is None
+        )
 
     def test_snapshot_read_at_old_epoch_hides_later_records(self) -> None:
         store = _as_testable(self.make_store())

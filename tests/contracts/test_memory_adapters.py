@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from kg_contracts.assertions import CurationStatus
+from kg_contracts.assertions import CanonicalEntity, CurationStatus
 from kg_contracts.curation import CurationOperation, CurationOperationType
 from kg_contracts.stores import (
     AdapterCapabilities,
@@ -176,37 +176,220 @@ def test_non_temporal_store_raises_unsupported_capability_for_temporal_options()
         store.assertions_for(entity.identity_id, options=GraphReadOptions(transaction_at=NOW))
 
 
-def test_revoked_record_visible_by_default():
-    # REVOKED read-visibility (issue #8): the canonical read surface only
-    # mandates hiding SUPERSEDED by default (`include_superseded`). REVOKED
-    # records deliberately stay visible — there is no `include_revoked`
-    # option. This pins current behavior; auto-hiding REVOKED would be a
-    # durable read-semantics change (an ADR, not a test-double tweak).
+def test_revoked_record_is_hidden_by_default_and_reachable_with_include_revoked():
+    # ADR-0025 changed this: REVOKED records are now hidden from canonical
+    # reads by default, because otherwise REVOKE_IDENTITY (the inverse of
+    # CREATE_IDENTITY) would change nothing a reader can observe. Nothing is
+    # deleted — include_revoked=True is the history surface that returns it.
     store = MemoryGraphStore()
     revoked_entity = make_entity(status=CurationStatus.REVOKED)
     store.put_entity(revoked_entity)
-    assert store.get_entity(revoked_entity.identity_id) is not None
+    assert store.get_entity(revoked_entity.identity_id) is None
+    assert (
+        store.get_entity(
+            revoked_entity.identity_id, options=GraphReadOptions(include_revoked=True)
+        )
+        == revoked_entity
+    )
 
     revoked_assertion = make_assertion(
         subject_identity=revoked_entity.identity_id, status=CurationStatus.REVOKED
     )
     store.put_assertion(revoked_assertion)
-    assert store.assertions_for(revoked_entity.identity_id) == [revoked_assertion]
+    assert store.assertions_for(revoked_entity.identity_id) == []
+    assert store.assertions_for(
+        revoked_entity.identity_id, options=GraphReadOptions(include_revoked=True)
+    ) == [revoked_assertion]
 
 
-def test_superseded_is_hidden_by_default_but_revoked_is_not():
-    # The asymmetry, pinned in one place: in the same position, SUPERSEDED is
-    # hidden without include_superseded while REVOKED is not.
+def test_superseded_and_revoked_are_hidden_by_two_independent_flags():
+    # Replaced-by-a-newer-record and withdrawn-outright are different facts.
+    # Neither flag may reveal the other's records: asking to see graph
+    # history must not surface retractions the caller did not ask for.
     store = MemoryGraphStore()
     ident = new_identity_id("g1")
     superseded = make_assertion(subject_identity=ident, status=CurationStatus.SUPERSEDED)
     revoked = make_assertion(subject_identity=ident, status=CurationStatus.REVOKED)
+    active = make_assertion(subject_identity=ident, status=CurationStatus.ACTIVE)
     store.put_assertion(superseded)
     store.put_assertion(revoked)
+    store.put_assertion(active)
 
-    visible = store.assertions_for(ident)
-    assert superseded not in visible
-    assert revoked in visible
+    assert store.assertions_for(ident) == [active]
+    assert store.assertions_for(
+        ident, options=GraphReadOptions(include_superseded=True)
+    ) == [superseded, active]
+    assert store.assertions_for(
+        ident, options=GraphReadOptions(include_revoked=True)
+    ) == [revoked, active]
+    assert store.assertions_for(
+        ident, options=GraphReadOptions(include_superseded=True, include_revoked=True)
+    ) == [superseded, revoked, active]
+
+
+def _create_identity_batch(plan_id: str, *entities: CanonicalEntity) -> GraphMutationBatch:
+    return GraphMutationBatch(
+        plan_id=plan_id,
+        operations=tuple(
+            CurationOperation(
+                type=CurationOperationType.CREATE_IDENTITY,
+                payload=entity.model_dump(mode="python"),
+            )
+            for entity in entities
+        ),
+    )
+
+
+def _revoke_identity_batch(plan_id: str, *entities: CanonicalEntity) -> GraphMutationBatch:
+    return GraphMutationBatch(
+        plan_id=plan_id,
+        operations=tuple(
+            CurationOperation(
+                type=CurationOperationType.REVOKE_IDENTITY,
+                payload={"identity_id": entity.identity_id, "reason": "rollback"},
+                reversal_data=entity.model_dump(mode="python"),
+            )
+            for entity in entities
+        ),
+    )
+
+
+def test_revoke_identity_reverses_a_committed_create_identity_run():
+    # The defect this closes, end to end: a committed run of eight
+    # CREATE_IDENTITY operations used to compensate to nothing. The counts
+    # are asserted BEFORE the compensation too, so "no entities visible"
+    # cannot pass vacuously on a store that never created any.
+    store = MemoryGraphStore()
+    entities = [make_entity(key=f"e{i}", identity_id=new_identity_id("g1")) for i in range(8)]
+
+    created = store.apply(_create_identity_batch("pl_create", *entities), preconditions=())
+    assert created.committed is True
+    assert len(store.find_entities(entity_type="TestEntity")) == 8
+
+    compensated = store.apply(_revoke_identity_batch("pl_undo", *entities), preconditions=())
+    assert compensated.committed is True
+    assert store.find_entities(entity_type="TestEntity") == []
+
+    # Reversed, not erased: every one is still there, named, and marked.
+    surviving = store.find_entities(
+        entity_type="TestEntity", options=GraphReadOptions(include_revoked=True)
+    )
+    assert {e.identity_id for e in surviving} == {e.identity_id for e in entities}
+    assert all(e.status is CurationStatus.REVOKED for e in surviving)
+
+
+def test_revoke_identity_preserves_the_creation_epoch():
+    # An identity that was created and then reversed must not silently become
+    # invisible in a way that breaks history. Advancing curation_epoch on
+    # revoke would do exactly that: an epoch-scoped read of the epoch that
+    # CREATED the identity would stop finding it.
+    store = MemoryGraphStore()
+    entity = make_entity(identity_id=new_identity_id("g1"))
+    created = store.apply(_create_identity_batch("pl_create", entity), preconditions=())
+    creation_epoch = created.new_epoch
+    assert creation_epoch is not None
+
+    revoked = store.apply(_revoke_identity_batch("pl_undo", entity), preconditions=())
+    assert revoked.new_epoch is not None
+    assert revoked.new_epoch > creation_epoch  # the revoke is its own epoch
+
+    # The revoke must actually have landed — asserting the epoch alone would
+    # also hold for a store that ignored the operation entirely.
+    assert store.get_entity(entity.identity_id) is None
+    stored = store.get_entity(
+        entity.identity_id, options=GraphReadOptions(include_revoked=True)
+    )
+    assert stored is not None
+    assert stored.status is CurationStatus.REVOKED
+    assert stored.curation_epoch == creation_epoch
+
+    # ... and the record is still reachable reading AS OF the creation epoch.
+    as_of_creation = store.get_entity(
+        entity.identity_id,
+        options=GraphReadOptions(curation_epoch=creation_epoch, include_revoked=True),
+    )
+    assert as_of_creation is not None
+    assert as_of_creation.identity_id == entity.identity_id
+    assert as_of_creation.status is CurationStatus.REVOKED
+
+
+def test_revoke_round_trip_restores_the_identity_but_not_its_creation_epoch():
+    # Pins a KNOWN BOUND, not a desired property (issue #51, ADR-0025).
+    # INVERSE_OPERATION_TYPES[REVOKE_IDENTITY] is CREATE_IDENTITY, which
+    # restores status and visibility but re-stamps curation_epoch, because
+    # CREATE_IDENTITY means "came into existence now". So the reverse leg
+    # LOSES the original creation epoch even though the forward leg preserves
+    # it. This test exists so the ADR cannot quietly imply a round-trip
+    # property the vocabulary does not have, and so a future RESTORE_IDENTITY
+    # has a failing test to flip.
+    store = MemoryGraphStore()
+    entity = make_entity(identity_id=new_identity_id("g1"))
+
+    created = store.apply(_create_identity_batch("pl_create", entity), preconditions=())
+    creation_epoch = created.new_epoch
+    assert creation_epoch is not None
+
+    store.apply(_revoke_identity_batch("pl_undo", entity), preconditions=())
+    revoked = store.get_entity(
+        entity.identity_id, options=GraphReadOptions(include_revoked=True)
+    )
+    assert revoked is not None
+    assert revoked.curation_epoch == creation_epoch  # forward leg: preserved
+
+    # Compensate the revoke from its own `reversal_data` — the PRE-revoke
+    # (ACTIVE) dump, which is what ADR-0025 prescribes reversal_data carries.
+    # Replaying the post-revoke copy instead would restore it still REVOKED.
+    restored_result = store.apply(
+        _create_identity_batch("pl_redo", entity), preconditions=()
+    )
+    assert restored_result.committed is True
+
+    restored = store.get_entity(entity.identity_id)
+    assert restored is not None
+    assert restored.status is CurationStatus.ACTIVE  # status IS restored ...
+    assert restored.curation_epoch != creation_epoch  # ... the epoch is NOT
+    assert restored.curation_epoch == restored_result.new_epoch
+
+    # The consequence that matters: the identity is no longer findable as of
+    # the epoch that originally created it.
+    assert (
+        store.get_entity(
+            entity.identity_id,
+            options=GraphReadOptions(curation_epoch=creation_epoch, include_revoked=True),
+        )
+        is None
+    )
+
+
+def test_revoke_identity_of_an_unknown_identity_does_not_commit():
+    store = MemoryGraphStore()
+    known = make_entity(identity_id=new_identity_id("g1"))
+    store.apply(_create_identity_batch("pl_create", known), preconditions=())
+    epoch_before = store.current_epoch()
+
+    ghost = new_identity_id("g1")
+    result = store.apply(_revoke_identity_batch("pl_ghost", make_entity(identity_id=ghost)),
+                         preconditions=())
+    assert result.committed is False
+    assert result.error is not None and ghost in result.error
+    # The store is untouched: no epoch burned, the real entity still visible.
+    assert store.current_epoch() == epoch_before
+    assert store.get_entity(known.identity_id) is not None
+
+
+def test_revoke_identity_without_a_string_identity_id_does_not_commit():
+    store = MemoryGraphStore()
+    batch = GraphMutationBatch(
+        plan_id="pl_bad",
+        operations=(
+            CurationOperation(
+                type=CurationOperationType.REVOKE_IDENTITY, payload={"reason": "rollback"}
+            ),
+        ),
+    )
+    result = store.apply(batch, preconditions=())
+    assert result.committed is False
+    assert result.error is not None and "identity_id" in result.error
 
 
 def test_memory_graph_store_other_five_operation_types_raise_not_implemented_plan_3():

@@ -132,9 +132,11 @@ class MemoryCandidateSink:
 class MemoryGraphStore:
     """Dict/list-backed reference `GraphMutationStore` + `GraphReader`.
 
-    `apply()` supports `CREATE_IDENTITY` and `ATTACH_ASSERTION` (Plan 1);
-    the other five `CurationOperationType` values raise `NotImplementedError`
-    naming Plan 3. Preconditions of kind `entity_version` are checked
+    `apply()` supports `CREATE_IDENTITY`, `ATTACH_ASSERTION` (Plan 1) and
+    `REVOKE_IDENTITY` (ADR-0025 — the reference implementation of the
+    `CREATE_IDENTITY` inverse, so a rollback can be demonstrated rather
+    than asserted); the other five `CurationOperationType` values raise
+    `NotImplementedError` naming Plan 3. Preconditions of kind `entity_version` are checked
     against an internal per-identity version counter; any other
     precondition kind is not enforced by this reference adapter (Plan 1
     curation plans only ever emit `entity_version` preconditions). A
@@ -218,6 +220,7 @@ class MemoryGraphStore:
         new_epoch = self._epoch + 1
         new_entities: list[CanonicalEntity] = []
         new_assertions: list[Assertion] = []
+        revoked_entities: list[CanonicalEntity] = []
         for operation in batch.operations:
             if operation.type is CurationOperationType.CREATE_IDENTITY:
                 new_entities.append(
@@ -229,6 +232,33 @@ class MemoryGraphStore:
                 new_assertions.append(
                     Assertion.model_validate({**operation.payload, "curation_epoch": new_epoch})
                 )
+            elif operation.type is CurationOperationType.REVOKE_IDENTITY:
+                identity_id = operation.payload.get("identity_id")
+                if not isinstance(identity_id, str):
+                    return CommitResult(
+                        batch_id=batch.batch_id,
+                        committed=False,
+                        error=(
+                            "REVOKE_IDENTITY payload requires a string identity_id "
+                            f"(got {identity_id!r})"
+                        ),
+                    )
+                existing = self._entities.get(identity_id)
+                if existing is None:
+                    return CommitResult(
+                        batch_id=batch.batch_id,
+                        committed=False,
+                        error=f"REVOKE_IDENTITY names an unknown identity: {identity_id!r}",
+                    )
+                # `curation_epoch` is deliberately NOT advanced: it records
+                # the epoch the identity was created in, and moving it
+                # forward would make the identity vanish from every
+                # epoch-scoped read of the history that created it — a
+                # rollback that erases the record of what it rolled back.
+                # Only `status` changes; the record itself is retained.
+                revoked_entities.append(
+                    existing.model_copy(update={"status": CurationStatus.REVOKED})
+                )
             else:
                 raise NotImplementedError(
                     f"{operation.type} is not implemented in Plan 1 (lands in Plan 3)"
@@ -238,10 +268,14 @@ class MemoryGraphStore:
             self.put_entity(entity)
         for assertion in new_assertions:
             self.put_assertion(assertion)
+        for entity in revoked_entities:
+            self.put_entity(entity)
 
-        touched_subjects = [e.identity_id for e in new_entities] + [
-            a.subject_identity for a in new_assertions
-        ]
+        touched_subjects = (
+            [e.identity_id for e in new_entities]
+            + [a.subject_identity for a in new_assertions]
+            + [e.identity_id for e in revoked_entities]
+        )
         for subject in touched_subjects:
             self._entity_versions[subject] = self._entity_versions.get(subject, 0) + 1
 
@@ -339,13 +373,19 @@ class MemoryGraphStore:
     ) -> bool:
         if options.curation_epoch is not None and record_epoch > options.curation_epoch:
             return False
-        # REVOKED visibility (issue #8): the spec/read surface only mandate
-        # hiding SUPERSEDED by default (`include_superseded`). REVOKED records
-        # deliberately remain visible here — there is no `include_revoked`
-        # option, and inventing default REVOKED hiding would be a durable
-        # read-semantics change (an ADR, not a test-double tweak). Pinned by
-        # test_memory_adapters.py::test_revoked_record_visible_by_default.
+        # REVOKED visibility: hidden by default since ADR-0025, which is the
+        # durable read-semantics change the previous comment here said this
+        # needed ("an ADR, not a test-double tweak"). Without it
+        # `REVOKE_IDENTITY` would change nothing a reader can observe, and a
+        # rollback that changes nothing observable is not a rollback.
+        # Nothing is deleted: the record keeps its original `curation_epoch`
+        # and `include_revoked=True` is the history surface that returns it.
+        # The two flags are independent — `include_superseded` never reveals
+        # a REVOKED record and `include_revoked` never reveals a SUPERSEDED
+        # one.
         if status is CurationStatus.SUPERSEDED and not options.include_superseded:
+            return False
+        if status is CurationStatus.REVOKED and not options.include_revoked:
             return False
         return True
 

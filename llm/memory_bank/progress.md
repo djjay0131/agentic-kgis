@@ -140,6 +140,28 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   clean (78 files), governance 4/4. Open: #38 (zero tags / frozen version — owner
   decision), #40 (suite-layout ADR), #41 (`py.typed` for `kgis`/`kg_eval`).
 
+- **2026-09-21 — #43/#44, ADR-0024/ADR-0025, 0.2.1 → 0.3.0.** Two platform
+  defects reported by the `agentic-kg` adopter, both re-verified here first.
+  (a) `ConfidencePolicy` could never route `AUTO`: the identity gate demanded
+  an `identity_confidence` that no production code path produces (only
+  `kg_contracts.testing.factories`, a test double, writes one) — measured 0
+  of 270 candidates `AUTO` from a real pipeline run. Fixed as a contract bug:
+  `route()` takes an `IdentityDisposition`, and only a *new* identity's
+  *absent* resolution score is excused; a stated low score, weak extraction,
+  weak source and policy risk all still block, and `UNRESOLVED` is blocked
+  outright. An interim `ResolutionDecision` validator in this work was caught
+  by the `agentic-kgcs` agent (it would have raised for every AUTO-routed
+  entity candidate) and dropped — it was unsound anyway, since the contract
+  cannot distinguish a minted identity id from a pre-existing one; the field's
+  meaning is issue #47. (b) `CREATE_IDENTITY` had no inverse, so a committed curation run
+  was irreversible; added `REVOKE_IDENTITY` (tombstone, creation epoch
+  preserved), `INVERSE_OPERATION_TYPES`, and `GraphReadOptions.include_revoked`
+  with `REVOKED` hidden by default — without which the revoke would have had
+  no observable effect. 785 passed, ruff clean, `mypy --strict` clean (78
+  files). 35 mutants killed against named tests with an unmutated control;
+  one survivor found and closed. KGCS must implement the compensator half
+  (see the PR body). Adversarial review returned APPROVE with two should-fix amendments, both landed: `include_revoked` coverage in the published conformance suite (an adapter could previously pass conformance while violating the new read contract), and the revoke round trip's loss of the creation epoch documented as a bound and pinned. Follow-ups: #45 (`PROMOTE_ONTOLOGY_TERM` has no inverse), #48 (the pairing map is a mutable dict), #49 (revoked identities keep visible assertions), #50 (batch-ordering and double-revoke edges), #51 (no `RESTORE_IDENTITY` — and the cheap in-place fix is provably wrong, it corrupts the forward leg), #52 (no `find_entities`/`neighborhood` conformance coverage).
+
 Works now: `kg_contracts` v2; both ingestion modes (deterministic structured
 sync + LLM document extraction) on a persistent candidate ledger + evidence
 registry; kg_eval v1 harness (P/R/F1, span/reference validity, hallucination/

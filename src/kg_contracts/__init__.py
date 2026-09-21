@@ -43,6 +43,7 @@ from kg_contracts.candidates import (
     candidate_adapter,
 )
 from kg_contracts.curation import (
+    INVERSE_OPERATION_TYPES,
     AuditRecord,
     CurationOperation,
     CurationOperationType,
@@ -83,7 +84,7 @@ from kg_contracts.ingestion import (
     IngestReport,
     Source,
 )
-from kg_contracts.policy import AdjudicationRoute, ConfidencePolicy
+from kg_contracts.policy import AdjudicationRoute, ConfidencePolicy, IdentityDisposition
 from kg_contracts.registry import (
     SCORED_FACTORS_V1,
     Backend,
@@ -172,6 +173,7 @@ __all__ = [
     # policy (T12)
     "AdjudicationRoute",
     "ConfidencePolicy",
+    "IdentityDisposition",
     # stores (T13, T15)
     "AdapterCapabilities",
     "CandidateSink",
@@ -189,6 +191,7 @@ __all__ = [
     "TemporalGraphReader",
     "UnsupportedCapabilityError",
     # curation (T14)
+    "INVERSE_OPERATION_TYPES",
     "AuditRecord",
     "CurationOperation",
     "CurationOperationType",

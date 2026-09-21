@@ -25,6 +25,7 @@ def test_graph_read_options_defaults_canonical_only_at_latest_published_epoch():
     opts = GraphReadOptions()
     assert opts.curation_epoch is None
     assert opts.include_superseded is False
+    assert opts.include_revoked is False
 
 
 def test_graph_read_options_has_no_ledger_visibility_option():

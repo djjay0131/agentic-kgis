@@ -43,7 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kg_contracts._frozen import FrozenDictFloat, FrozenDictObject
 from kg_contracts._ulid import new_ulid
-from kg_contracts.policy import AdjudicationRoute
+from kg_contracts.policy import AdjudicationRoute, IdentityDisposition
 
 
 class ProcessingState(StrEnum):
@@ -82,15 +82,96 @@ class FailureKind(StrEnum):
 
 
 class CurationOperationType(StrEnum):
-    """The kinds of compensable operation a `CurationPlan` may carry."""
+    """The kinds of compensable operation a `CurationPlan` may carry.
+
+    "Compensable" is load-bearing: every type here must have an inverse
+    *in this vocabulary*, or a plan containing it cannot be rolled back at
+    all. The pairing is:
+
+    | operation | inverse |
+    |---|---|
+    | `CREATE_IDENTITY` | `REVOKE_IDENTITY` |
+    | `REVOKE_IDENTITY` | `CREATE_IDENTITY` |
+    | `ATTACH_ASSERTION` | `RETRACT_ASSERTION` |
+    | `RETRACT_ASSERTION` | `ATTACH_ASSERTION` |
+    | `MERGE_IDENTITIES` | `SPLIT_IDENTITY` |
+    | `SPLIT_IDENTITY` | `MERGE_IDENTITIES` |
+    | `REASSIGN_ASSERTION` | `REASSIGN_ASSERTION` (endpoints swapped) |
+    | `PROMOTE_ONTOLOGY_TERM` | none yet — see issue #45 |
+
+    `REVOKE_IDENTITY` (ADR-0025) closes the `CREATE_IDENTITY` gap. It is a
+    **tombstone, not a deletion and not a supersession**: it sets
+    `CanonicalEntity.status` to `REVOKED` and leaves the record — and its
+    original `curation_epoch` — in place, so an epoch-scoped read passing
+    `include_revoked=True` still finds the identity that was created. A
+    revoked record is returned by **no** default read, at any epoch:
+    preserving the epoch keeps it *findable on the history surface*, it
+    does not keep it *visible*. Supersession would have been wrong twice
+    over: nothing replaces a reversed identity, and
+    `GraphReadOptions.include_superseded` would then resurrect it in
+    exactly the history views that must show it as withdrawn.
+
+    Payloads (the shapes an executor must accept):
+
+    - `CREATE_IDENTITY` — a `CanonicalEntity` dump.
+    - `ATTACH_ASSERTION` — an `Assertion` dump.
+    - `REVOKE_IDENTITY` — `{"identity_id": <identity id>}`, plus an optional
+      `"reason"`. Deliberately *not* a whole entity dump: the executor
+      revokes the entity that is actually in the graph, so a stale copy in
+      the plan cannot overwrite it. The pre-revoke entity belongs in the
+      operation's `reversal_data`, which is what lets `REVOKE_IDENTITY`
+      itself be compensated by a `CREATE_IDENTITY`.
+    """
 
     CREATE_IDENTITY = "CREATE_IDENTITY"
+    REVOKE_IDENTITY = "REVOKE_IDENTITY"
     ATTACH_ASSERTION = "ATTACH_ASSERTION"
     MERGE_IDENTITIES = "MERGE_IDENTITIES"
     SPLIT_IDENTITY = "SPLIT_IDENTITY"
     REASSIGN_ASSERTION = "REASSIGN_ASSERTION"
     RETRACT_ASSERTION = "RETRACT_ASSERTION"
     PROMOTE_ONTOLOGY_TERM = "PROMOTE_ONTOLOGY_TERM"
+
+
+INVERSE_OPERATION_TYPES: dict[CurationOperationType, CurationOperationType] = {
+    CurationOperationType.CREATE_IDENTITY: CurationOperationType.REVOKE_IDENTITY,
+    CurationOperationType.REVOKE_IDENTITY: CurationOperationType.CREATE_IDENTITY,
+    CurationOperationType.ATTACH_ASSERTION: CurationOperationType.RETRACT_ASSERTION,
+    CurationOperationType.RETRACT_ASSERTION: CurationOperationType.ATTACH_ASSERTION,
+    CurationOperationType.MERGE_IDENTITIES: CurationOperationType.SPLIT_IDENTITY,
+    CurationOperationType.SPLIT_IDENTITY: CurationOperationType.MERGE_IDENTITIES,
+    CurationOperationType.REASSIGN_ASSERTION: CurationOperationType.REASSIGN_ASSERTION,
+}
+"""Which operation type compensates which (ADR-0025).
+
+The compensator itself lives in `agentic-kgcs` — this is the *vocabulary*
+half, published here so the two repos cannot disagree about which type
+reverses which, and so "is this operation compensable at all?" is a lookup
+against the contract rather than a judgement re-made in each executor.
+
+`PROMOTE_ONTOLOGY_TERM` is absent because it has no inverse yet (issue #45):
+absence here is the honest statement that a plan containing it is not fully
+compensable, not an oversight to be papered over with a plausible-looking
+entry.
+
+**This map answers "what type reverses this type", not "can this plan be
+rolled back today".** Membership here is a statement about the *vocabulary*.
+Whether an executor can actually apply a given type is a separate question
+with a different answer per adapter — the reference `MemoryGraphStore`
+implements only `CREATE_IDENTITY`, `ATTACH_ASSERTION` and `REVOKE_IDENTITY`,
+and raises `NotImplementedError` (Plan 3) for the rest. A caller checking
+compensability must consult both.
+
+**Known bound on `REVOKE_IDENTITY` -> `CREATE_IDENTITY` (issue #51).** That
+direction restores the identity's *status and visibility*, but not its
+original `curation_epoch`: `CREATE_IDENTITY` means "this identity came into
+existence now" and stamps the committing epoch, so a create-revoke-restore
+round trip returns the identity `ACTIVE` at a *new* epoch and an epoch-scoped
+read of the original creation epoch no longer finds it. The
+`CREATE_IDENTITY` -> `REVOKE_IDENTITY` direction — the one ADR-0025 exists to
+provide — is epoch-preserving and has no such bound. A true un-revoke
+(`REVOKED @ E` -> `ACTIVE @ E`) needs a `RESTORE_IDENTITY` type; that is
+issue #51, not this change."""
 
 
 class CurationOperation(BaseModel):
@@ -160,6 +241,12 @@ class ResolutionDecision(BaseModel):
 
     The full `score_vector` and `matcher_version`/`snapshot_version` are
     logged — a single stored final confidence cannot reproduce a decision.
+
+    `identity_disposition()` projects this decision onto the three-state
+    input `ConfidencePolicy.route()` needs (ADR-0024): this model is where
+    "did we link to an existing identity, mint a new one, or decide
+    nothing?" is already known, so the adjudication gate reads it from here
+    rather than each caller re-deriving it from two fields.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -178,6 +265,33 @@ class ResolutionDecision(BaseModel):
         if not self.score_vector:
             raise ValueError("score_vector must be non-empty")
         return self
+
+    def identity_disposition(self) -> IdentityDisposition:
+        """This decision as the identity input to `ConfidencePolicy.route()`.
+
+        `create_new_identity` wins outright, and it wins **even when
+        `resolved_identity` is also set**. A resolver that mints a new
+        identity normally has to name the id it minted — the executor needs
+        it to build the `CREATE_IDENTITY` payload — so setting both fields
+        is the expected shape for a new-identity decision, not a
+        contradiction (issue #47).
+
+        Otherwise a named `resolved_identity` is `RESOLVED_EXISTING`; no
+        identity and no instruction to mint one is an abstention, which is
+        `UNRESOLVED` — never silently treated as a resolution.
+
+        This method deliberately does **not** try to reject
+        `create_new_identity=True` alongside a `resolved_identity` that
+        names a pre-existing entity. `kg_contracts` holds no graph access,
+        so it cannot tell a freshly minted identity id from an existing one
+        — both are `kg://<graph-id>/identity/<ulid>`. A check here would
+        fire on the legitimate case and still miss the illegitimate one.
+        """
+        if self.create_new_identity:
+            return IdentityDisposition.NEW_IDENTITY
+        if self.resolved_identity is None:
+            return IdentityDisposition.UNRESOLVED
+        return IdentityDisposition.RESOLVED_EXISTING
 
 
 class CurationPlan(BaseModel):

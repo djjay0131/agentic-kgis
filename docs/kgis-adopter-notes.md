@@ -78,3 +78,150 @@ distinguishable from the broken one: a build from this commit or later reports
 `importlib.metadata.version("agentic-kgis") == "0.2.1"`, and a `pip`-resolvable
 constraint of `agentic-kgis>=0.2.1` against a git install now means something.
 `agentic-kgcs`'s `agentic-kgis>=0.2.0` does not.
+
+## `AUTO` was unreachable before 0.3.0 (issue #43, ADR-0024)
+
+If you wired `ConfidencePolicy` into a curation pipeline against 0.2.x and
+found that *nothing* ever routed `AUTO`, this is why — and it was our bug, not
+your wiring.
+
+`ConfidencePolicy.route()` took only a `CandidateScores` and, by default,
+refused `AUTO` unless `identity_confidence >= 0.95`. **Nothing in this platform
+produces an `identity_confidence.** `SourceScoring.to_scores()` is the only
+`CandidateScores` construction site in production code and never sets it; the
+LLM extractor only ever updates `extraction_confidence`; `kg_eval` never
+constructs one. The only other writer is `kg_contracts.testing.factories`, a
+test double — which is why the unit tests passed while every real run
+deadlocked.
+
+Measured in this repository: a real `IngestPipeline` run over a 90-row
+structured source produced 270 candidates and routed **0** of them `AUTO` under
+an unmodified `ConfidencePolicy()`. Raising the source to
+`SourceScoring(source_reliability=1.0, extraction_confidence=1.0,
+policy_risk=0.0)` changed nothing. The `agentic-kg` adopter measured the same
+0-`AUTO` outcome on a different corpus.
+
+### What changed
+
+`route()` now takes a second argument:
+
+```python
+policy.route(candidate.scores, IdentityDisposition.NEW_IDENTITY)
+```
+
+`IdentityDisposition` says what your resolution stage concluded:
+
+| value | meaning | effect on the `AUTO` identity gate |
+|---|---|---|
+| `RESOLVED_EXISTING` (default) | linked to an existing identity | requires `identity_confidence >= auto_min_identity_confidence`; a missing score blocks |
+| `NEW_IDENTITY` | no existing identity matched; a new one is minted | an **absent** score no longer blocks; a **stated** score is still enforced |
+| `UNRESOLVED` | resolution did not run, or abstained | `AUTO` blocked outright |
+
+The default is `RESOLVED_EXISTING`, which is what `route()` always assumed, so
+**no existing call site changes behaviour**. You reach `AUTO` by feeding your
+resolution outcome into the gate — which is what ADR-0007 always intended.
+
+### How to wire it
+
+If your resolver produces a `ResolutionDecision`, do not derive the disposition
+by hand:
+
+```python
+route = policy.route(candidate.scores, decision.identity_disposition())
+```
+
+`ResolutionDecision.identity_disposition()` maps `create_new_identity` →
+`NEW_IDENTITY`, a named `resolved_identity` → `RESOLVED_EXISTING`, and neither
+→ `UNRESOLVED`.
+
+**Setting both fields is fine and is the expected shape for a new-identity
+decision.** `create_new_identity` is checked first, so a resolver that mints an
+identity and names the id it minted — which is what the executor needs to build
+the `CREATE_IDENTITY` payload — maps to `NEW_IDENTITY` and routes normally. No
+validation rejects the combination. (What `resolved_identity` *means* in that
+case is deliberately still undefined; see issue #47.)
+
+### What did *not* get weaker
+
+`NEW_IDENTITY` relaxes the identity dimension and nothing else. A new-identity
+candidate still needs `extraction_confidence >= auto_min_extraction`,
+`source_reliability >= auto_min_source_reliability`, and a `policy_risk` inside
+`auto_max_policy_risk`; and if your resolver *does* state a low
+`identity_confidence`, that still blocks `AUTO`. If you want new identities
+gated too, set `ConfidencePolicy(allow_auto_for_new_identity=False)` — a config
+change, no code.
+
+## `CREATE_IDENTITY` is now reversible (issue #44, ADR-0025)
+
+`CurationOperationType` had no inverse for `CREATE_IDENTITY`, so a committed
+curation run of creations — the normal first-ingest case — could not be
+compensated at all. `REVOKE_IDENTITY` closes the gap.
+
+- **Payload**: `{"identity_id": "<identity id>"}`, optional `"reason"`. Put the
+  pre-revoke `CanonicalEntity` dump in the operation's `reversal_data` so the
+  revoke is itself compensable by a `CREATE_IDENTITY`.
+- **Effect**: a tombstone. `CanonicalEntity.status` becomes `REVOKED`; the
+  record is retained and keeps its **original** `curation_epoch`, so an
+  epoch-scoped read of the epoch that created the identity still finds it —
+  **with `include_revoked=True`**. A revoked record is never returned by a
+  default read at *any* epoch; preserving the epoch keeps it findable on the
+  history surface, it does not keep it visible. Nothing is deleted and
+  nothing is superseded.
+- **Pairing**: `kg_contracts.INVERSE_OPERATION_TYPES` publishes which operation
+  type compensates which. `PROMOTE_ONTOLOGY_TERM` is deliberately absent — it
+  still has no inverse (issue #45). The map answers *"what type reverses this
+  type"*, **not** *"can this plan be rolled back today"*: whether an executor
+  can apply a given type is per-adapter, and the reference `MemoryGraphStore`
+  implements only `CREATE_IDENTITY`, `ATTACH_ASSERTION` and `REVOKE_IDENTITY`.
+- **Known bound (issue #51)**: compensating in the *other* direction —
+  `REVOKE_IDENTITY` undone by `CREATE_IDENTITY` from `reversal_data` — restores
+  status and visibility but **not** the original `curation_epoch`, because
+  `CREATE_IDENTITY` stamps the committing epoch by design. A
+  create-revoke-restore round trip returns the identity `ACTIVE` at a *new*
+  epoch. The direction this release exists to provide (`CREATE_IDENTITY`
+  compensated by `REVOKE_IDENTITY`) is epoch-preserving and has no such bound.
+- **`reversal_data` carries the PRE-revoke (`ACTIVE`) entity dump.** Replaying
+  the post-revoke copy would restore the identity still `REVOKED`.
+
+### Read-semantics change — check this one
+
+`GraphReadOptions` gains `include_revoked: bool = False`, **and `REVOKED`
+records are now hidden from canonical reads by default.** Without that, a
+revoke would change nothing any reader could observe.
+
+`include_superseded` and `include_revoked` are independent; neither reveals the
+other's records. If you were writing `REVOKED` entities or assertions by hand
+and relying on seeing them in a default read, add `include_revoked=True`. No
+in-platform operation produced `REVOKED` records before 0.3.0, so this only
+affects records you constructed yourself.
+
+### If you implement your own `GraphMutationStore`
+
+You must handle `REVOKE_IDENTITY`. `MemoryGraphStore.apply()` is the reference
+implementation: preserve `curation_epoch`, change only `status`, and refuse to
+commit (`committed=False` with an `error`) when the named identity does not
+exist rather than silently skipping it.
+
+**You must also re-run the conformance suite.** `GraphMutationStoreContract`
+(`kg_contracts.testing.contract`) gained three tests in 0.3.0 —
+`test_revoked_assertions_hidden_by_default_visible_with_flag`,
+`test_include_superseded_and_include_revoked_are_independent`, and
+`test_revoke_identity_hides_entity_and_preserves_creation_epoch`. Before
+0.3.0 the suite pinned `include_superseded` but said nothing about
+`include_revoked`, so an adapter could pass conformance while serving
+withdrawn records on ordinary reads. If your adapter ignores `include_revoked`,
+collapses it and `include_superseded` into one "show everything" flag, or
+serves revoked records on an unscoped read but drops them when
+`curation_epoch=` and `include_revoked=True` are **combined**, it now
+**fails conformance** instead of passing quietly. All three were confirmed by
+building the exploiting adapter and running the suite against it.
+
+Known remaining gap: the suite still has no `find_entities`/`neighborhood`
+coverage (issue #52), so those two read methods are not yet checked against
+the status filters cross-adapter. Check them yourself until that lands.
+
+### Pinning
+
+Still no tags and no PyPI release (issue #38), so a SHA remains the only exact
+pin. The version is `0.3.0`; `agentic-kgis>=0.3.0` is the constraint that means
+"has a reachable `AUTO` route and a reversible `CREATE_IDENTITY`".
