@@ -28,7 +28,7 @@ files under `candidates/` are mapped to their ADR numbers in
 | [0003](0003-layered-write-path.md) | Layered write path: inline deterministic gate + async probabilistic curation | Accepted | superseded in part — see ADRs 0006, 0007, 0010 and ADR-0004 amendment |
 | [0004](0004-dual-ingestion-modes.md) | Both ingestion modes in v1 (structured sync + LLM extraction) | Accepted | amended 2026-07-10: CandidateScores replaces single confidence |
 | [0005](0005-graph-registry-and-advisor.md) | Graph registry + extend-vs-new advisor, human-gated with automation path | Accepted | amended 2026-07-10: 12 factors, four outcome architectures |
-| [0006](0006-three-store-separation.md) | Three-store separation: candidate ledger / canonical graph / derived projections, with curation epochs | Accepted | superseded in part by ADR-0011: the `GraphReadOptions.include_provisional` field |
+| [0006](0006-three-store-separation.md) | Three-store separation: candidate ledger / canonical graph / derived projections, with curation epochs | Accepted | superseded in part by ADR-0011 (the `GraphReadOptions.include_provisional` field) and by ADR-0025 (default REVOKED visibility) |
 | [0007](0007-entity-resolution-architecture.md) | Entity-resolution architecture: calibrated pipeline, bounded LLM adviser, deterministic policy gate | Accepted |  |
 | [0008](0008-identity-model.md) | Identity model: immutable internal identity IDs plus namespaced aliases | Accepted |  |
 | [0009](0009-kg-eval-and-honest-null.md) | kg_eval package and the honest-null policy | Accepted |  |
@@ -46,3 +46,5 @@ files under `candidates/` are mapped to their ADR numbers in
 | [0021](0021-fail-closed-contract-narrowings.md) | Three fail-closed narrowings of the frozen `kg_contracts` | Accepted | promoted from candidate 2026-08-22; owner to confirm no external `GraphMutationStore` emits a reasonless `committed=False` |
 | [0022](0022-structured-snapshot-version-provenance.md) | A candidate has no first-class home for its source snapshot version | Accepted | promoted from candidate 2026-08-22 |
 | [0023](0023-candidate-model-and-extractor-version-fields.md) | First-class model / extractor-version fields on the candidate envelope | Accepted | promoted from candidate 2026-08-22 |
+| [0024](0024-identity-disposition-is-an-input-to-adjudication.md) | The identity disposition is an input to the adjudication gate | Accepted | issue #43 — fixes the `AUTO` deadlock |
+| [0025](0025-revoke-identity-inverts-create-identity.md) | `REVOKE_IDENTITY` inverts `CREATE_IDENTITY`; REVOKED hidden from canonical reads by default | Accepted | issue #44 — supersedes ADR-0006 in part |

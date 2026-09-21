@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentic-kgis"
-version = "0.2.1"
+version = "0.3.0"
 description = "Knowledge Graph Ingestion Service: kg_contracts ports layer, kgis ingestion, kg_eval evaluation"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.0"]

@@ -1,5 +1,58 @@
 # Active Context — agentic-kgis
 
+Update 2026-09-21: **two platform defects that made the deterministic
+curation core unusable as shipped** (issues #43/#44, ADR-0024/ADR-0025,
+version 0.2.1 → 0.3.0). Both were surfaced by the `agentic-kg` adopter
+wiring its curation pipeline, and both were re-verified here before any code
+moved.
+
+**#43 — the adjudication deadlock.** `ConfidencePolicy.route()` took only a
+`CandidateScores` and refused `AUTO` without `identity_confidence >= 0.95`.
+Nothing in `kg_contracts`, `kgis` or `kg_eval` produces that score:
+`SourceScoring.to_scores()` is the only `CandidateScores` construction site
+in production code and never sets it, the LLM extractor updates only
+`extraction_confidence`, and the sole remaining writer is
+`kg_contracts.testing.factories` — a test double. Measured here: a real
+`IngestPipeline` run over 90 rows emits 270 candidates and routes **0** of
+them `AUTO`; the most generous scoring the platform can express changes
+nothing; flipping `require_identity_confidence_for_auto` alone flips all 270.
+So *every* adopter's deterministic core planned nothing, on any corpus.
+
+The fix treats it as a **contract bug, not a missing producer**. Resolution
+confidence is confidence in a resolution; a candidate minting a brand-new
+identity has no resolution to be confident about, and KGIS structurally
+cannot produce the number anyway (no graph read surface, ADR-0010) — anything
+it emitted would be a fabricated score. `route()` now takes an
+`IdentityDisposition` (`RESOLVED_EXISTING` default, `NEW_IDENTITY`,
+`UNRESOLVED`); only an absent score on a `NEW_IDENTITY` is excused, a stated
+low score still blocks, extraction/source/risk gates are untouched, and
+`UNRESOLVED` is now blocked outright — strictly stronger than before.
+`ResolutionDecision.identity_disposition()` does the mapping so no caller
+derives it by hand.
+
+**#44 — `CREATE_IDENTITY` had no inverse,** so a committed run of creations
+compensated to nothing. Added `REVOKE_IDENTITY` (a tombstone: status
+`REVOKED`, record retained, **original `curation_epoch` preserved** — moving
+it would make the identity vanish from epoch-scoped reads of the epoch that
+created it) plus `INVERSE_OPERATION_TYPES`, which names the pairing for KGCS
+and leaves `PROMOTE_ONTOLOGY_TERM` deliberately absent (issue #45). The
+second half matters as much: `_is_visible` left `REVOKED` records visible by
+default, so a revoke would have changed nothing observable — a rollback that
+rolls nothing back. `GraphReadOptions.include_revoked` now exists and
+`REVOKED` is hidden by default, superseding ADR-0006 in part. The old
+`test_revoked_record_visible_by_default` pinned the previous behaviour and
+named an ADR as the way to change it; ADR-0025 is that ADR.
+
+**Verification note worth keeping.** 27 mutants, each run against its named
+tests alone with an unmutated control in every batch. One survived: the
+`curation_epoch`-preservation test also passed against a store that ignored
+`REVOKE_IDENTITY` entirely, because `include_revoked=True` returns `ACTIVE`
+records too — the assertion could not distinguish "revoked, epoch kept" from
+"never revoked". Strengthened to assert the default read no longer returns
+the entity and the stored status is `REVOKED`; the mutant then died. Also a
+process lesson: `git checkout -- <file>` restores from HEAD, so mutation
+testing against *uncommitted* work silently deletes it. Commit first.
+
 Update 2026-09-18: **`import kgis` was broken for every consumer without the
 `[dev]` extra** (issue #37, PR #39, version bumped 0.2.0 → 0.2.1).
 `kgis/evidence/__init__.py` eagerly imported `kgis/evidence/contract.py`, a
