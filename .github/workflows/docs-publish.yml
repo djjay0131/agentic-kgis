@@ -1,12 +1,14 @@
-name: Docs — build, validate, and (gated) publish
+name: Docs — build, validate, and publish
 
 # Builds the KGIS documentation site (docs-site/, MkDocs Material), validates
 # the satellite publishing manifest against the hub contract, and runs the
-# base-path link-check. The actual publish to the research hub is GATED: it runs
-# only on a manual workflow_dispatch, because the `kgis` satellite is NOT
-# provisioned yet (owner-only Terraform in website/infra + the GCP_* repo vars).
-# Build + validate + link-check run on every push/PR so the docs cannot silently
-# rot; publish stays off until the owner enables it.
+# base-path link-check. The publish to the research hub is now ENABLED on a push
+# to main (and on manual dispatch): the `kgis` satellite is provisioned — the WIF
+# provider, publish SA and prefix-scoped IAM are applied in website/infra, and the
+# GCP_* repo variables are set. Pull requests still build, validate and
+# link-check but do NOT publish: the hub's WIF binding admits refs/heads/main only,
+# so a PR cannot authenticate, and publishing from an unreviewed PR is the wrong
+# direction anyway.
 
 on:
   push:
@@ -74,19 +76,18 @@ jobs:
             --base-path /projects/kgis/kgis-docs/
 
       # ---------------------------------------------------------------------
-      # GATED PUBLISH — disabled until the owner provisions the kgis satellite.
-      #
-      # Prerequisites (owner-only, see the feature spec Follow-ups):
-      #   1. Terraform in website/infra: the `kgis` source, a WIF provider entry
-      #      for djjay0131/agentic-kgis, and prefix-scoped IAM to sources/kgis/.
-      #   2. Repo variables: GCP_PROJECT_ID, GCP_WIF_PROVIDER, GCP_PUBLISH_SA,
-      #      GCP_CONTENT_BUCKET.
-      # Until then this step is skipped on every trigger except a manual
-      # workflow_dispatch (where it will fail on auth if the satellite is still
-      # unprovisioned — that is expected and loses nothing).
+      # PUBLISH — enabled 2026-10-01. The `kgis` satellite is provisioned:
+      #   1. Terraform in website/infra applied the `kgis` source, the github-kgis
+      #      WIF provider, the ref-pinned impersonation binding and the
+      #      prefix-conditioned bucket binding (website commit a68feea).
+      #   2. Repo variables GCP_PROJECT_ID, GCP_WIF_PROVIDER, GCP_PUBLISH_SA and
+      #      GCP_CONTENT_BUCKET are set.
+      # It runs on a push to main and on manual dispatch, NOT on a pull request:
+      # the hub's WIF binding admits refs/heads/main only, so a PR cannot
+      # authenticate, and an unreviewed PR must not publish.
       # ---------------------------------------------------------------------
-      - name: Publish to the research hub (gated)
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+      - name: Publish to the research hub
+        if: ${{ github.event_name != 'pull_request' }}
         uses: djjay0131/website/contract/publish@v1
         with:
           dist: docs-site/dist
