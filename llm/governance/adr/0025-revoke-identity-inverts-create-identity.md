@@ -299,6 +299,9 @@ status.
   #51 (no `RESTORE_IDENTITY`: the reverse leg loses the creation epoch),
   #52 (the published conformance suite has no `find_entities`/`neighborhood`
   coverage)
+- Issues #49 and #50 are resolved by ADR-0026, which extends this ADR's
+  `REVOKE_IDENTITY` semantics (a revoked identity shields its assertions;
+  single-batch create-then-revoke is ordered; a double revoke fails loudly).
 
 ## Supersedes
 

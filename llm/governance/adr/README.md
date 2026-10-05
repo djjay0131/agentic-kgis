@@ -48,3 +48,4 @@ files under `candidates/` are mapped to their ADR numbers in
 | [0023](0023-candidate-model-and-extractor-version-fields.md) | First-class model / extractor-version fields on the candidate envelope | Accepted | promoted from candidate 2026-08-22 |
 | [0024](0024-identity-disposition-is-an-input-to-adjudication.md) | The identity disposition is an input to the adjudication gate | Accepted | issue #43 — fixes the `AUTO` deadlock |
 | [0025](0025-revoke-identity-inverts-create-identity.md) | `REVOKE_IDENTITY` inverts `CREATE_IDENTITY`; REVOKED hidden from canonical reads by default | Accepted | issue #44 — supersedes ADR-0006 in part |
+| [0026](0026-revoke-cascade-and-batch-semantics.md) | A revoked identity shields its assertions; single-batch ordering; double revoke fails loudly | Accepted | issues #49/#50 — extends ADR-0025 |

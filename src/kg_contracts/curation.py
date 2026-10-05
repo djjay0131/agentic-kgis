@@ -111,6 +111,22 @@ class CurationOperationType(StrEnum):
     `GraphReadOptions.include_superseded` would then resurrect it in
     exactly the history views that must show it as withdrawn.
 
+    `REVOKE_IDENTITY` also shields the identity's **assertions** (ADR-0026,
+    issue #49): a default canonical read of a revoked identity's assertions
+    returns nothing, so a rolled-back run cannot leave live assertions
+    hanging off a withdrawn identity. This is a read rule, not an assertion
+    mutation — each assertion keeps its own status, so a superseded one is
+    still known to be superseded — and the shield lifts under
+    `include_revoked=True`, exactly like the identity's.
+
+    Executors apply a batch's operations **in order** (ADR-0026, issue #50).
+    A `REVOKE_IDENTITY` may therefore name an identity created earlier in the
+    same batch — the batch commits a tombstone at its own epoch — but a revoke
+    that appears *before* its target's create is still an unknown identity.
+    Revoking an already-revoked identity does **not** commit: like ADR-0013's
+    ledger `revoke()` it fails loudly, naming the cause, instead of silently
+    consuming an epoch.
+
     Payloads (the shapes an executor must accept):
 
     - `CREATE_IDENTITY` — a `CanonicalEntity` dump.
