@@ -85,6 +85,11 @@ class GraphReadOptions(BaseModel):
     record is retained at its original `curation_epoch` and is always
     reachable with `include_revoked=True` — that is the history surface for
     a rolled-back curation run (`CurationOperationType.REVOKE_IDENTITY`).
+    Revoking an identity also shields its assertions from default reads
+    (ADR-0026): `assertions_for(<revoked identity>)` returns nothing unless
+    `include_revoked=True`, while each assertion's own status keeps gating
+    it independently — so a superseded assertion on a revoked identity
+    needs both flags.
 
     There is deliberately **no** ledger-visibility option here (ADR-0011,
     correcting ADR-0006's original field list). Under ADR-0006 the canonical

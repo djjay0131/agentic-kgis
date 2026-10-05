@@ -392,6 +392,138 @@ def test_revoke_identity_without_a_string_identity_id_does_not_commit():
     assert result.error is not None and "identity_id" in result.error
 
 
+def test_revoke_identity_shields_assertions_without_mutating_their_status():
+    # Issue #49 / ADR-0026 is a READ-layer shield, not an executor rewrite of
+    # the assertions. The distinction matters: if the executor flipped the
+    # attached assertions to REVOKED it would destroy the fact that one of
+    # them had been SUPERSEDED, which is a different fact from the identity
+    # being withdrawn.
+    store = MemoryGraphStore()
+    entity = make_entity(identity_id=new_identity_id("g1"))
+    active = make_assertion(subject_identity=entity.identity_id, object_value=200)
+    superseded = make_assertion(
+        subject_identity=entity.identity_id,
+        object_value=195,
+        status=CurationStatus.SUPERSEDED,
+        superseded_at=NOW,
+    )
+    store.apply(_create_identity_batch("pl_create", entity), preconditions=())
+    store.apply(
+        GraphMutationBatch(
+            plan_id="pl_attach",
+            operations=(
+                CurationOperation(
+                    type=CurationOperationType.ATTACH_ASSERTION,
+                    payload=active.model_dump(mode="python"),
+                ),
+                CurationOperation(
+                    type=CurationOperationType.ATTACH_ASSERTION,
+                    payload=superseded.model_dump(mode="python"),
+                ),
+            ),
+        ),
+        preconditions=(),
+    )
+    store.apply(_revoke_identity_batch("pl_undo", entity), preconditions=())
+
+    surfaced = store.assertions_for(
+        entity.identity_id,
+        options=GraphReadOptions(include_revoked=True, include_superseded=True),
+    )
+    by_id = {a.assertion_id: a for a in surfaced}
+    assert by_id[active.assertion_id].status is CurationStatus.ACTIVE
+    assert by_id[superseded.assertion_id].status is CurationStatus.SUPERSEDED
+
+
+def test_neighborhood_of_a_revoked_identity_does_not_traverse_its_assertions():
+    # Issue #49 names this consequence explicitly: `neighborhood()` dropped the
+    # revoked entity but the assertions that pointed through it stayed
+    # readable via their subject. With the read shield they no longer are, so a
+    # revoked identity is not a back door to its neighbours either.
+    store = MemoryGraphStore()
+    subject = make_entity(key="a", identity_id=new_identity_id("g1"))
+    target = make_entity(key="b", identity_id=new_identity_id("g1"))
+    relation = make_assertion(
+        subject_identity=subject.identity_id,
+        object_value=None,
+        object_identity=target.identity_id,
+    )
+    store.apply(_create_identity_batch("pl_create", subject, target), preconditions=())
+    store.apply(
+        GraphMutationBatch(
+            plan_id="pl_attach",
+            operations=(
+                CurationOperation(
+                    type=CurationOperationType.ATTACH_ASSERTION,
+                    payload=relation.model_dump(mode="python"),
+                ),
+            ),
+        ),
+        preconditions=(),
+    )
+    assert [
+        e.identity_id for e in store.neighborhood(subject.identity_id)
+    ] == [target.identity_id]
+
+    store.apply(_revoke_identity_batch("pl_undo", subject), preconditions=())
+    assert store.neighborhood(subject.identity_id) == []
+    # include_revoked lifts the subject shield, and the live target is
+    # reachable again through the retired identity's assertion.
+    assert [
+        e.identity_id
+        for e in store.neighborhood(
+            subject.identity_id, options=GraphReadOptions(include_revoked=True)
+        )
+    ] == [target.identity_id]
+
+
+def test_revoke_before_create_in_one_batch_is_an_unknown_identity_error():
+    # Issue #50a / ADR-0026 documents the ordering constraint: operations apply
+    # in order, so a REVOKE must FOLLOW the CREATE of its target. The reverse
+    # order is not silently reordered; it stays the honest "unknown identity"
+    # failure, and the batch leaves the store untouched.
+    store = MemoryGraphStore()
+    entity = make_entity(identity_id=new_identity_id("g1"))
+    epoch_before = store.current_epoch()
+    result = store.apply(
+        GraphMutationBatch(
+            plan_id="pl_bad_order",
+            operations=(
+                CurationOperation(
+                    type=CurationOperationType.REVOKE_IDENTITY,
+                    payload={"identity_id": entity.identity_id},
+                ),
+                CurationOperation(
+                    type=CurationOperationType.CREATE_IDENTITY,
+                    payload=entity.model_dump(mode="python"),
+                ),
+            ),
+        ),
+        preconditions=(),
+    )
+    assert result.committed is False
+    assert result.error is not None and "unknown identity" in result.error
+    assert store.current_epoch() == epoch_before
+    assert store.find_entities(entity_type="TestEntity") == []
+
+
+def test_double_revoke_error_names_the_already_revoked_identity():
+    # Issue #50b / ADR-0026: the error is specific enough to act on, and the
+    # second revoke consumes no epoch.
+    store = MemoryGraphStore()
+    entity = make_entity(identity_id=new_identity_id("g1"))
+    store.apply(_create_identity_batch("pl_create", entity), preconditions=())
+    store.apply(_revoke_identity_batch("pl_undo", entity), preconditions=())
+    epoch_after_first = store.current_epoch()
+
+    result = store.apply(_revoke_identity_batch("pl_undo_again", entity), preconditions=())
+    assert result.committed is False
+    assert result.error is not None
+    assert "already-revoked" in result.error
+    assert entity.identity_id in result.error
+    assert store.current_epoch() == epoch_after_first
+
+
 def test_memory_graph_store_other_five_operation_types_raise_not_implemented_plan_3():
     store = MemoryGraphStore()
     entity = make_entity()

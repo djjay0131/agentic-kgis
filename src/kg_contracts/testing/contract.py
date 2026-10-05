@@ -466,6 +466,163 @@ class GraphMutationStoreContract:
             is None
         )
 
+    def test_revoke_identity_hides_its_assertions_by_default_and_flag_reveals(self) -> None:
+        # Issue #49 / ADR-0026. Revoking an identity must hide that identity's
+        # assertions from default reads, not leave them live off a withdrawn
+        # identity. They are retained and surface with include_revoked=True.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        assertion = make_assertion(subject_identity=entity.identity_id, object_value=200)
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(_create_identity_op(entity), _attach_assertion_op(assertion)),
+            ),
+            preconditions=(),
+        )
+        assert [a.assertion_id for a in store.assertions_for(entity.identity_id)] == [
+            assertion.assertion_id
+        ]
+
+        store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        )
+
+        assert store.assertions_for(entity.identity_id) == []
+        surfaced = store.assertions_for(
+            entity.identity_id, options=GraphReadOptions(include_revoked=True)
+        )
+        assert [a.assertion_id for a in surfaced] == [assertion.assertion_id]
+        # Retained, not deleted: the assertion's own status is untouched by
+        # the revoke (the shield is a read rule, not an assertion mutation).
+        assert surfaced[0].status is CurationStatus.ACTIVE
+
+    def test_revoked_identity_assertion_visibility_flag_cross_terms(self) -> None:
+        # Issue #49 / ADR-0026, the cross term. A revoked identity's assertions
+        # are hidden by default; include_revoked is what surfaces them, and the
+        # assertion's own status still gates it independently. A SUPERSEDED
+        # assertion on a REVOKED identity therefore needs BOTH flags:
+        # include_superseded alone must not reveal an assertion belonging to a
+        # withdrawn identity, and include_revoked alone must not reveal a
+        # superseded one. An adapter that collapsed the two switches into one
+        # "show everything" flag passes either single-flag test and fails here.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        active = make_assertion(
+            subject_identity=entity.identity_id, predicate="height_cm", object_value=200
+        )
+        superseded = make_assertion(
+            subject_identity=entity.identity_id,
+            predicate="height_cm",
+            object_value=195,
+            status=CurationStatus.SUPERSEDED,
+            superseded_at=NOW,
+        )
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(
+                    _create_identity_op(entity),
+                    _attach_assertion_op(active),
+                    _attach_assertion_op(superseded),
+                ),
+            ),
+            preconditions=(),
+        )
+        store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        )
+
+        def ids(*, superseded_flag: bool = False, revoked_flag: bool = False) -> set[str]:
+            options = GraphReadOptions(
+                include_superseded=superseded_flag, include_revoked=revoked_flag
+            )
+            return {
+                a.assertion_id
+                for a in store.assertions_for(entity.identity_id, options=options)
+            }
+
+        assert ids() == set()
+        # include_superseded must NOT reach past the withdrawn identity ...
+        assert ids(superseded_flag=True) == set()
+        # ... and include_revoked must NOT reveal the superseded assertion.
+        assert ids(revoked_flag=True) == {active.assertion_id}
+        assert ids(superseded_flag=True, revoked_flag=True) == {
+            active.assertion_id,
+            superseded.assertion_id,
+        }
+
+    def test_create_and_revoke_identity_in_one_batch_commits_a_tombstone(self) -> None:
+        # Issue #50a / ADR-0026. Operations apply in order, so a REVOKE naming
+        # an identity minted earlier in the same batch is coherent: it commits
+        # a tombstone at this batch's epoch rather than failing with a
+        # misleading "unknown identity". The attached assertion is shielded
+        # with the identity and surfaces only under include_revoked.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        assertion = make_assertion(subject_identity=entity.identity_id)
+        epoch_before = store.current_epoch()
+        result = store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(
+                    _create_identity_op(entity),
+                    _attach_assertion_op(assertion),
+                    _revoke_identity_op(entity),
+                ),
+            ),
+            preconditions=(),
+        )
+        assert result.committed is True
+        assert result.new_epoch == epoch_before + 1
+        assert store.current_epoch() == result.new_epoch
+
+        assert store.get_entity(entity.identity_id) is None
+        assert store.assertions_for(entity.identity_id) == []
+        stored = store.get_entity(
+            entity.identity_id, options=GraphReadOptions(include_revoked=True)
+        )
+        assert stored is not None
+        assert stored.status is CurationStatus.REVOKED
+        surfaced = store.assertions_for(
+            entity.identity_id, options=GraphReadOptions(include_revoked=True)
+        )
+        assert [a.assertion_id for a in surfaced] == [assertion.assertion_id]
+
+    def test_second_revoke_of_already_revoked_identity_does_not_commit(self) -> None:
+        # Issue #50b / ADR-0026. A revoke with nothing left to revoke must fail
+        # loudly rather than commit a no-op epoch that looks like it did
+        # something — the canonical-graph analogue of ADR-0013's ledger
+        # `revoke()`, adapted to the `CommitResult` contract. The store is
+        # untouched: no epoch consumed, the tombstone intact.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        store.apply(
+            GraphMutationBatch(plan_id="pl_1", operations=(_create_identity_op(entity),)),
+            preconditions=(),
+        )
+        first = store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        )
+        assert first.committed is True
+        epoch_after_first = store.current_epoch()
+
+        second = store.apply(
+            GraphMutationBatch(plan_id="pl_3", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        )
+        assert second.committed is False
+        assert second.new_epoch is None
+        assert second.error is not None and entity.identity_id in second.error
+        assert store.current_epoch() == epoch_after_first
+        stored = store.get_entity(
+            entity.identity_id, options=GraphReadOptions(include_revoked=True)
+        )
+        assert stored is not None and stored.status is CurationStatus.REVOKED
+
     def test_snapshot_read_at_old_epoch_hides_later_records(self) -> None:
         store = _as_testable(self.make_store())
         entity = make_entity()

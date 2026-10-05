@@ -218,20 +218,28 @@ class MemoryGraphStore:
             )
 
         new_epoch = self._epoch + 1
-        new_entities: list[CanonicalEntity] = []
+        # Operations apply in order, and build a **staged** view so a later
+        # operation sees an earlier one in the same batch. That is what makes
+        # `CREATE_IDENTITY` followed by `REVOKE_IDENTITY` of the same target a
+        # coherent single batch — it commits a tombstone at this batch's epoch
+        # (issue #50a) — instead of failing with a misleading "unknown
+        # identity" because the target is not yet in `self._entities`.
+        staged_entities: dict[str, CanonicalEntity] = {}
         new_assertions: list[Assertion] = []
-        revoked_entities: list[CanonicalEntity] = []
+        touched_subjects: list[str] = []
         for operation in batch.operations:
             if operation.type is CurationOperationType.CREATE_IDENTITY:
-                new_entities.append(
-                    CanonicalEntity.model_validate(
-                        {**operation.payload, "curation_epoch": new_epoch}
-                    )
+                entity = CanonicalEntity.model_validate(
+                    {**operation.payload, "curation_epoch": new_epoch}
                 )
+                staged_entities[entity.identity_id] = entity
+                touched_subjects.append(entity.identity_id)
             elif operation.type is CurationOperationType.ATTACH_ASSERTION:
-                new_assertions.append(
-                    Assertion.model_validate({**operation.payload, "curation_epoch": new_epoch})
+                assertion = Assertion.model_validate(
+                    {**operation.payload, "curation_epoch": new_epoch}
                 )
+                new_assertions.append(assertion)
+                touched_subjects.append(assertion.subject_identity)
             elif operation.type is CurationOperationType.REVOKE_IDENTITY:
                 identity_id = operation.payload.get("identity_id")
                 if not isinstance(identity_id, str):
@@ -243,12 +251,27 @@ class MemoryGraphStore:
                             f"(got {identity_id!r})"
                         ),
                     )
-                existing = self._entities.get(identity_id)
+                existing = staged_entities.get(identity_id, self._entities.get(identity_id))
                 if existing is None:
                     return CommitResult(
                         batch_id=batch.batch_id,
                         committed=False,
                         error=f"REVOKE_IDENTITY names an unknown identity: {identity_id!r}",
+                    )
+                # Issue #50b: a revoke with nothing left to revoke must fail
+                # loudly rather than commit a no-op epoch that looks like it
+                # did something — the canonical-graph analogue of ADR-0013's
+                # ledger `revoke()`, which raises `KeyError` when the row is
+                # already revoked/erased. Checked against the staged status so
+                # a batch that revokes the same identity twice also fails.
+                if existing.status is CurationStatus.REVOKED:
+                    return CommitResult(
+                        batch_id=batch.batch_id,
+                        committed=False,
+                        error=(
+                            "REVOKE_IDENTITY targets an already-revoked identity: "
+                            f"{identity_id!r}"
+                        ),
                     )
                 # `curation_epoch` is deliberately NOT advanced: it records
                 # the epoch the identity was created in, and moving it
@@ -256,26 +279,19 @@ class MemoryGraphStore:
                 # epoch-scoped read of the history that created it — a
                 # rollback that erases the record of what it rolled back.
                 # Only `status` changes; the record itself is retained.
-                revoked_entities.append(
-                    existing.model_copy(update={"status": CurationStatus.REVOKED})
+                staged_entities[identity_id] = existing.model_copy(
+                    update={"status": CurationStatus.REVOKED}
                 )
+                touched_subjects.append(identity_id)
             else:
                 raise NotImplementedError(
                     f"{operation.type} is not implemented in Plan 1 (lands in Plan 3)"
                 )
 
-        for entity in new_entities:
+        for entity in staged_entities.values():
             self.put_entity(entity)
         for assertion in new_assertions:
             self.put_assertion(assertion)
-        for entity in revoked_entities:
-            self.put_entity(entity)
-
-        touched_subjects = (
-            [e.identity_id for e in new_entities]
-            + [a.subject_identity for a in new_assertions]
-            + [e.identity_id for e in revoked_entities]
-        )
         for subject in touched_subjects:
             self._entity_versions[subject] = self._entity_versions.get(subject, 0) + 1
 
@@ -324,6 +340,19 @@ class MemoryGraphStore:
         self, identity_id: str, options: GraphReadOptions = GraphReadOptions()
     ) -> list[Assertion]:
         self._check_temporal_options(options)
+        # Issue #49 / ADR-0026: a revoked identity takes its assertions with
+        # it. `REVOKE_IDENTITY` tombstones the entity, so a default canonical
+        # read of that identity's assertions must return nothing rather than
+        # leave live assertions hanging off an identity no reader can see.
+        # This is a READ-layer shield, not an assertion mutation: the
+        # assertion's own status (ACTIVE or SUPERSEDED) is preserved, so
+        # history keeps the fact that it was superseded rather than revoked.
+        # `include_revoked=True` is the history surface that returns them,
+        # and the assertion's own `_is_visible` status filter still applies
+        # underneath — a SUPERSEDED assertion on a revoked identity therefore
+        # needs BOTH flags, keeping the two switches independent.
+        if not self._subject_visible(identity_id, options):
+            return []
         results: list[Assertion] = []
         for assertion in self._assertions.get(identity_id, []):
             if not self._is_visible(assertion.curation_epoch, assertion.status, options):
@@ -367,6 +396,22 @@ class MemoryGraphStore:
             raise UnsupportedCapabilityError(
                 "valid_at/transaction_at require an adapter with supports_temporal_queries"
             )
+
+    def _subject_visible(self, identity_id: str, options: GraphReadOptions) -> bool:
+        """Whether the *subject identity* permits its assertions to be read.
+
+        Only `REVOKED` shields: an unknown subject is left alone (an orphan
+        assertion is a separate concern), and `SUPERSEDED` identities are out
+        of scope here because ADR-0026 extends only the `REVOKE_IDENTITY`
+        tombstone. `include_revoked` is the single switch that reveals a
+        withdrawn identity and, with it, its assertions.
+        """
+        entity = self._entities.get(identity_id)
+        if entity is None:
+            return True
+        if entity.status is CurationStatus.REVOKED:
+            return options.include_revoked
+        return True
 
     def _is_visible(
         self, record_epoch: int, status: CurationStatus, options: GraphReadOptions
