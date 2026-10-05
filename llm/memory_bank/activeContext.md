@@ -1,5 +1,42 @@
 # Active Context — agentic-kgis
 
+Update 2026-10-05: **the two remaining `REVOKE_IDENTITY` semantics holes
+from adversarial review of PR #46** (issues #49/#50, ADR-0026; no version
+change — release is separate).
+
+**#49 — a revoked identity's assertions stayed visible.** ADR-0025 hid the
+entity but not what hung off it: `assertions_for(<revoked identity>)` still
+returned its `ACTIVE` assertions on a default read, so a rolled-back run
+left live assertions on an identity no reader could see. Fixed as a
+**read-layer shield**: a default canonical read of a revoked identity's
+assertions returns nothing; `include_revoked=True` is the history surface
+that returns them. Deliberately not an executor cascade that rewrites the
+assertions to `REVOKED` — that would destroy the `SUPERSEDED` fact, and the
+two switches must stay independent: a superseded assertion on a revoked
+identity needs **both** `include_revoked` and `include_superseded`. A
+compensating plan does not have to enumerate a still-unimplemented
+`RETRACT_ASSERTION` per assertion (Plan 3), and un-revoking (issue #51's
+future `RESTORE_IDENTITY`) will restore its assertions for free.
+
+**#50a — create-then-revoke in one batch failed** with a misleading
+"unknown identity" because `apply()` built all operations before applying
+any. `apply()` now builds a **staged** view as it walks the batch, so a
+`REVOKE_IDENTITY` may name an identity created earlier in the same batch
+and the batch commits a tombstone at its own epoch. The ordering rule is
+contractual: revoke-before-create is still the honest unknown-identity
+failure, store untouched.
+
+**#50b — double revoke committed silently**, consuming an epoch for a
+no-op. A revoke whose target is already `REVOKED` now returns
+`committed=False` naming the cause and allocates no epoch — the
+`CommitResult` analogue of ADR-0013's ledger `revoke()` (which raises
+`KeyError` when nothing is left to revoke).
+
+All four behaviours (shield, cross-term, single-batch, double-revoke) are
+now pinned in the published `GraphMutationStoreContract`, so the
+`agentic-kg` Neo4j store is held to them too, plus four whitebox tests on
+the memory adapter. 793 passed, ruff and `mypy --strict` (78 files) green.
+
 Update 2026-09-21: **two platform defects that made the deterministic
 curation core unusable as shipped** (issues #43/#44, ADR-0024/ADR-0025,
 version 0.2.1 → 0.3.0). Both were surfaced by the `agentic-kg` adopter
