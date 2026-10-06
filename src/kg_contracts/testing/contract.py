@@ -85,6 +85,14 @@ def _revoke_identity_op(entity: CanonicalEntity) -> CurationOperation:
     )
 
 
+def _restore_identity_op(entity: CanonicalEntity) -> CurationOperation:
+    return CurationOperation(
+        type=CurationOperationType.RESTORE_IDENTITY,
+        payload={"identity_id": entity.identity_id},
+        reversal_data=entity.model_dump(mode="python"),
+    )
+
+
 class MemoryReviewQueue:
     """List-backed reference `ReviewQueue` (spec §7.6).
 
@@ -622,6 +630,300 @@ class GraphMutationStoreContract:
             entity.identity_id, options=GraphReadOptions(include_revoked=True)
         )
         assert stored is not None and stored.status is CurationStatus.REVOKED
+
+    def test_restore_identity_undoes_a_revoke_and_preserves_creation_epoch(self) -> None:
+        # Issue #51 / ADR-0027. The reverse leg ADR-0025 lacked as an
+        # operation: RESTORE_IDENTITY flips REVOKED back to ACTIVE *without*
+        # re-stamping the creation epoch, so the identity is findable again as
+        # of the epoch that created it. Contrast the CREATE_IDENTITY replay
+        # pinned as a bound by
+        # `test_revoke_round_trip_restores_the_identity_but_not_its_creation_epoch`.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        created = store.apply(
+            GraphMutationBatch(plan_id="pl_1", operations=(_create_identity_op(entity),)),
+            preconditions=(),
+        )
+        creation_epoch = created.new_epoch
+        assert creation_epoch is not None
+
+        store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        )
+        assert store.get_entity(entity.identity_id) is None
+
+        restored = store.apply(
+            GraphMutationBatch(plan_id="pl_3", operations=(_restore_identity_op(entity),)),
+            preconditions=(),
+        )
+        assert restored.committed is True
+        assert restored.new_epoch == creation_epoch + 2
+
+        live = store.get_entity(entity.identity_id)
+        assert live is not None
+        assert live.status is CurationStatus.ACTIVE
+        # The restore is its own committed epoch, but the record keeps the
+        # epoch that created it — that is the whole point of the type.
+        assert live.curation_epoch == creation_epoch
+
+        # The property that matters: a default read *as of the creation epoch*
+        # finds the identity again.
+        as_of_creation = store.get_entity(
+            entity.identity_id, options=GraphReadOptions(curation_epoch=creation_epoch)
+        )
+        assert as_of_creation is not None
+        assert as_of_creation.identity_id == entity.identity_id
+
+    def test_restore_identity_lifts_the_assertion_shield(self) -> None:
+        # ADR-0026 shields a revoked identity's assertions from default reads;
+        # ADR-0027's restore is what lifts that shield, without mutating any
+        # assertion's own status.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        active = make_assertion(subject_identity=entity.identity_id, object_value=200)
+        superseded = make_assertion(
+            subject_identity=entity.identity_id,
+            object_value=195,
+            status=CurationStatus.SUPERSEDED,
+            superseded_at=NOW,
+        )
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(
+                    _create_identity_op(entity),
+                    _attach_assertion_op(active),
+                    _attach_assertion_op(superseded),
+                ),
+            ),
+            preconditions=(),
+        )
+        assert [a.assertion_id for a in store.assertions_for(entity.identity_id)] == [
+            active.assertion_id
+        ]
+
+        store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        )
+        assert store.assertions_for(entity.identity_id) == []
+
+        store.apply(
+            GraphMutationBatch(plan_id="pl_3", operations=(_restore_identity_op(entity),)),
+            preconditions=(),
+        )
+        assert [a.assertion_id for a in store.assertions_for(entity.identity_id)] == [
+            active.assertion_id
+        ]
+        surfaced = store.assertions_for(
+            entity.identity_id, options=GraphReadOptions(include_superseded=True)
+        )
+        by_id = {a.assertion_id: a for a in surfaced}
+        assert by_id[active.assertion_id].status is CurationStatus.ACTIVE
+        assert by_id[superseded.assertion_id].status is CurationStatus.SUPERSEDED
+
+    def test_restore_identity_of_active_identity_does_not_commit(self) -> None:
+        # Issue #51 / ADR-0027: the mirror of the double-revoke rule. A restore
+        # with nothing to restore fails loudly, names the identity, and
+        # consumes no epoch.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        store.apply(
+            GraphMutationBatch(plan_id="pl_1", operations=(_create_identity_op(entity),)),
+            preconditions=(),
+        )
+        epoch_before = store.current_epoch()
+
+        result = store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_restore_identity_op(entity),)),
+            preconditions=(),
+        )
+        assert result.committed is False
+        assert result.new_epoch is None
+        assert result.error is not None and entity.identity_id in result.error
+        assert store.current_epoch() == epoch_before
+        stored = store.get_entity(entity.identity_id)
+        assert stored is not None and stored.status is CurationStatus.ACTIVE
+
+    def test_second_restore_of_already_restored_identity_does_not_commit(self) -> None:
+        # Double restore, the exact analogue of double revoke (#50b): a no-op
+        # must not masquerade as a committed status change.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        store.apply(
+            GraphMutationBatch(plan_id="pl_1", operations=(_create_identity_op(entity),)),
+            preconditions=(),
+        )
+        store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        )
+        first = store.apply(
+            GraphMutationBatch(plan_id="pl_3", operations=(_restore_identity_op(entity),)),
+            preconditions=(),
+        )
+        assert first.committed is True
+        epoch_after_first = store.current_epoch()
+
+        second = store.apply(
+            GraphMutationBatch(plan_id="pl_4", operations=(_restore_identity_op(entity),)),
+            preconditions=(),
+        )
+        assert second.committed is False
+        assert second.new_epoch is None
+        assert second.error is not None and entity.identity_id in second.error
+        assert store.current_epoch() == epoch_after_first
+
+    def test_revoke_restore_revoke_cycle_returns_to_revoked_at_the_creation_epoch(self) -> None:
+        # The sequence issue #51 names: revoke -> restore -> revoke must work,
+        # landing back on REVOKED with the original creation epoch intact.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        created = store.apply(
+            GraphMutationBatch(plan_id="pl_1", operations=(_create_identity_op(entity),)),
+            preconditions=(),
+        )
+        creation_epoch = created.new_epoch
+        assert creation_epoch is not None
+
+        assert store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        ).committed
+        assert store.get_entity(entity.identity_id) is None
+
+        assert store.apply(
+            GraphMutationBatch(plan_id="pl_3", operations=(_restore_identity_op(entity),)),
+            preconditions=(),
+        ).committed
+        assert store.get_entity(entity.identity_id) is not None
+
+        assert store.apply(
+            GraphMutationBatch(plan_id="pl_4", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        ).committed
+        assert store.get_entity(entity.identity_id) is None
+        stored = store.get_entity(
+            entity.identity_id, options=GraphReadOptions(include_revoked=True)
+        )
+        assert stored is not None
+        assert stored.status is CurationStatus.REVOKED
+        assert stored.curation_epoch == creation_epoch
+
+    def test_restore_identity_assertion_visibility_flag_cross_terms(self) -> None:
+        # After a restore the *subject* shield is gone, so the two visibility
+        # switches behave exactly as for a never-revoked identity — restoring
+        # lifts the shield, it does not collapse the flags. An assertion whose
+        # own status is REVOKED still needs include_revoked; a SUPERSEDED one
+        # still needs include_superseded.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        active = make_assertion(
+            subject_identity=entity.identity_id, predicate="height_cm", object_value=200
+        )
+        superseded = make_assertion(
+            subject_identity=entity.identity_id,
+            predicate="height_cm",
+            object_value=195,
+            status=CurationStatus.SUPERSEDED,
+            superseded_at=NOW,
+        )
+        revoked = make_assertion(
+            subject_identity=entity.identity_id,
+            predicate="height_cm",
+            object_value=190,
+            status=CurationStatus.REVOKED,
+        )
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(
+                    _create_identity_op(entity),
+                    _attach_assertion_op(active),
+                    _attach_assertion_op(superseded),
+                    _attach_assertion_op(revoked),
+                ),
+            ),
+            preconditions=(),
+        )
+        store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        )
+        store.apply(
+            GraphMutationBatch(plan_id="pl_3", operations=(_restore_identity_op(entity),)),
+            preconditions=(),
+        )
+
+        def ids(*, superseded_flag: bool = False, revoked_flag: bool = False) -> set[str]:
+            options = GraphReadOptions(
+                include_superseded=superseded_flag, include_revoked=revoked_flag
+            )
+            return {
+                a.assertion_id
+                for a in store.assertions_for(entity.identity_id, options=options)
+            }
+
+        assert ids() == {active.assertion_id}
+        assert ids(superseded_flag=True) == {active.assertion_id, superseded.assertion_id}
+        assert ids(revoked_flag=True) == {active.assertion_id, revoked.assertion_id}
+        assert ids(superseded_flag=True, revoked_flag=True) == {
+            active.assertion_id,
+            superseded.assertion_id,
+            revoked.assertion_id,
+        }
+
+    def test_assertion_on_live_subject_with_revoked_object_stays_visible_by_default(self) -> None:
+        # Owner decision (a), ADR-0027. The ADR-0026 shield is on the SUBJECT
+        # identity only: an assertion whose subject is live remains visible on a
+        # default read even when its object_identity is revoked. Withdrawing the
+        # object is not a retraction of the relation. neighborhood() keeps its
+        # current behaviour and still drops the revoked target — a revoked node
+        # is not a live neighbour, which does not contradict (a) because the
+        # assertion itself is still served by assertions_for().
+        store = _as_testable(self.make_store())
+        subject = make_entity(key="a")
+        target = make_entity(key="b")
+        relation = make_assertion(
+            subject_identity=subject.identity_id,
+            object_value=None,
+            object_identity=target.identity_id,
+        )
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(
+                    _create_identity_op(subject),
+                    _create_identity_op(target),
+                    _attach_assertion_op(relation),
+                ),
+            ),
+            preconditions=(),
+        )
+        assert [a.assertion_id for a in store.assertions_for(subject.identity_id)] == [
+            relation.assertion_id
+        ]
+        assert [e.identity_id for e in store.neighborhood(subject.identity_id)] == [
+            target.identity_id
+        ]
+
+        store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_revoke_identity_op(target),)),
+            preconditions=(),
+        )
+
+        # (a): the live subject's assertion is NOT shielded by the object revoke.
+        assert [a.assertion_id for a in store.assertions_for(subject.identity_id)] == [
+            relation.assertion_id
+        ]
+        assert store.neighborhood(subject.identity_id) == []
+        assert [
+            e.identity_id
+            for e in store.neighborhood(
+                subject.identity_id, options=GraphReadOptions(include_revoked=True)
+            )
+        ] == [target.identity_id]
 
     def test_snapshot_read_at_old_epoch_hides_later_records(self) -> None:
         store = _as_testable(self.make_store())

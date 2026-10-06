@@ -425,16 +425,32 @@ def test_create_new_identity_wins_over_a_named_identity_in_the_disposition():
 # --- ADR-0025: every operation type but one has a named inverse -------------
 
 
-def test_create_identity_and_revoke_identity_are_mutual_inverses():
-    # The defect: a plan of CREATE_IDENTITY operations used to compensate to
-    # nothing, because the vocabulary named no operation that reverses one.
+def test_create_identity_is_inverted_by_revoke_identity():
+    # The forward leg ADR-0025 exists to provide: a genuine create is undone by
+    # withdrawing it. Unchanged by ADR-0027.
     assert (
         INVERSE_OPERATION_TYPES[CurationOperationType.CREATE_IDENTITY]
         is CurationOperationType.REVOKE_IDENTITY
     )
+
+
+def test_revoke_identity_is_inverted_by_restore_identity_not_create_identity():
+    # Issue #51 / ADR-0027. Un-revoking is a status flip back, not a create:
+    # replaying CREATE_IDENTITY would re-stamp the creation epoch and lose it,
+    # so the reverse leg is RESTORE_IDENTITY.
     assert (
         INVERSE_OPERATION_TYPES[CurationOperationType.REVOKE_IDENTITY]
-        is CurationOperationType.CREATE_IDENTITY
+        is CurationOperationType.RESTORE_IDENTITY
+    )
+    assert (
+        INVERSE_OPERATION_TYPES[CurationOperationType.RESTORE_IDENTITY]
+        is CurationOperationType.REVOKE_IDENTITY
+    )
+    # The eager wrong answer, pinned as wrong: CREATE_IDENTITY must not be the
+    # inverse of REVOKE_IDENTITY.
+    assert (
+        INVERSE_OPERATION_TYPES[CurationOperationType.REVOKE_IDENTITY]
+        is not CurationOperationType.CREATE_IDENTITY
     )
 
 
@@ -446,14 +462,45 @@ def test_every_operation_type_except_promote_ontology_term_has_an_inverse():
     assert missing == {CurationOperationType.PROMOTE_ONTOLOGY_TERM}
 
 
-def test_inverse_operation_types_is_an_involution():
-    # Applying the inverse twice returns the original operation type, so
-    # compensating a compensation replays the original work.
+def test_inverse_operation_types_is_involutive_except_at_create_identity():
+    # Applying the inverse twice returns the original operation type for every
+    # entry EXCEPT CREATE_IDENTITY. That exception is the deliberate asymmetry
+    # of ADR-0027: CREATE -> REVOKE, but REVOKE -> RESTORE (not CREATE), so
+    # that the reverse leg preserves the creation epoch. A future "fix" that
+    # made the map a clean involution again would reintroduce issue #51.
     for op_type, inverse in INVERSE_OPERATION_TYPES.items():
         assert inverse in INVERSE_OPERATION_TYPES, op_type
-        assert INVERSE_OPERATION_TYPES[inverse] is op_type
+        if op_type is not CurationOperationType.CREATE_IDENTITY:
+            assert INVERSE_OPERATION_TYPES[inverse] is op_type
+    assert (
+        INVERSE_OPERATION_TYPES[
+            INVERSE_OPERATION_TYPES[CurationOperationType.CREATE_IDENTITY]
+        ]
+        is CurationOperationType.RESTORE_IDENTITY
+    )
+    assert (
+        INVERSE_OPERATION_TYPES[
+            INVERSE_OPERATION_TYPES[CurationOperationType.CREATE_IDENTITY]
+        ]
+        is not CurationOperationType.CREATE_IDENTITY
+    )
+
+
+def test_inverse_operation_types_is_read_only():
+    # Issue #48: the pairing is contract, so the public mapping must not be
+    # mutable process-wide. An in-place write raises rather than silently
+    # papering over PROMOTE_ONTOLOGY_TERM's deliberate absence (issue #45).
+    with pytest.raises(TypeError):
+        INVERSE_OPERATION_TYPES[CurationOperationType.PROMOTE_ONTOLOGY_TERM] = (  # type: ignore[index]
+            CurationOperationType.CREATE_IDENTITY
+        )
 
 
 def test_revoke_identity_is_a_member_of_the_operation_vocabulary():
     assert CurationOperationType.REVOKE_IDENTITY.value == "REVOKE_IDENTITY"
     assert "REVOKE_IDENTITY" in CurationOperationType.__members__
+
+
+def test_restore_identity_is_a_member_of_the_operation_vocabulary():
+    assert CurationOperationType.RESTORE_IDENTITY.value == "RESTORE_IDENTITY"
+    assert "RESTORE_IDENTITY" in CurationOperationType.__members__

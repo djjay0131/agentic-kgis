@@ -161,6 +161,22 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   files). 35 mutants killed against named tests with an unmutated control;
   one survivor found and closed. KGCS must implement the compensator half
   (see the PR body). Adversarial review returned APPROVE with two should-fix amendments, both landed: `include_revoked` coverage in the published conformance suite (an adapter could previously pass conformance while violating the new read contract), and the revoke round trip's loss of the creation epoch documented as a bound and pinned. Follow-ups: #45 (`PROMOTE_ONTOLOGY_TERM` has no inverse), #48 (the pairing map is a mutable dict), #49 (revoked identities keep visible assertions), #50 (batch-ordering and double-revoke edges), #51 (no `RESTORE_IDENTITY` — and the cheap in-place fix is provably wrong, it corrupts the forward leg), #52 (no `find_entities`/`neighborhood` conformance coverage).
+- 2026-10-06: **Issue #51 fixed; owner ruled on PR #54's object-side
+  question** (ADR-0027, Proposed). (b) Added
+  `CurationOperationType.RESTORE_IDENTITY` — flips `REVOKED` to `ACTIVE` at
+  the identity's **original** `curation_epoch`, lifts the ADR-0026 assertion
+  shield, and commits its own epoch; restoring a non-revoked identity is a
+  loud non-commit consuming no epoch. Retargeted
+  `INVERSE_OPERATION_TYPES[REVOKE_IDENTITY]` to it (CREATE -> REVOKE stays;
+  the identity row is deliberately not an involution) and made the map an
+  immutable `MappingProxyType` (#48). (a) The shield is **subject-only**: an
+  assertion on a live subject with a revoked `object_identity` stays visible
+  by default; `neighborhood()` still drops the revoked target. Both pinned in
+  the published `GraphMutationStoreContract`, alongside restore conformance
+  (epoch preservation, shield lift, the two non-commit forms, the
+  revoke/restore/revoke cycle, and assertion-flag cross-terms after restore).
+  Follow-ups: `agentic-kgcs`'s compensator inverse table (ADR-0020) and
+  `agentic-kg`'s `Neo4jCanonicalGraphStore` must adopt `RESTORE_IDENTITY`.
 
 Works now: `kg_contracts` v2; both ingestion modes (deterministic structured
 sync + LLM document extraction) on a persistent candidate ledger + evidence

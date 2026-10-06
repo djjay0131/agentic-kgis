@@ -184,6 +184,16 @@ proposes `RESTORE_IDENTITY` rather than a change to `CREATE_IDENTITY`.
 Note also that `reversal_data` must carry the **pre-revoke (`ACTIVE`)** entity
 dump; replaying a post-revoke copy restores the identity still `REVOKED`.
 
+**Resolved (2026-10-06):** issue #51 is taken up by ADR-0027 (Proposed),
+which adds `CurationOperationType.RESTORE_IDENTITY` — the distinct operation
+type this section says is the only correct repair. It flips `REVOKED` back
+to `ACTIVE` at the identity's **original** `curation_epoch`, retargets
+`INVERSE_OPERATION_TYPES[REVOKE_IDENTITY]` to it, and lifts the ADR-0026
+assertion shield. The bound described here therefore applies only to the
+CREATE_IDENTITY-replay path, which ADR-0027 no longer names as the reverse
+leg; the forward-leg decision in this ADR — `CREATE_IDENTITY` compensated by
+`REVOKE_IDENTITY` — stands unchanged.
+
 ## Rationale
 
 "Compensable" is load-bearing in the `CurationOperationType` docstring; an
@@ -302,6 +312,10 @@ status.
 - Issues #49 and #50 are resolved by ADR-0026, which extends this ADR's
   `REVOKE_IDENTITY` semantics (a revoked identity shields its assertions;
   single-batch create-then-revoke is ordered; a double revoke fails loudly).
+- Issues #48 (the pairing map is mutable) and #51 (the reverse leg loses the
+  creation epoch, §6 above) are taken up by ADR-0027 (Proposed), which adds
+  `RESTORE_IDENTITY`, retargets the reverse leg to it, and makes
+  `INVERSE_OPERATION_TYPES` read-only.
 
 ## Supersedes
 

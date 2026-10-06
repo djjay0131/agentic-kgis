@@ -35,8 +35,10 @@ semantics: plain approve/reject is not enough for a real curation UI, so
 later justifies raising auto-promotion thresholds.
 """
 
+from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -91,13 +93,25 @@ class CurationOperationType(StrEnum):
     | operation | inverse |
     |---|---|
     | `CREATE_IDENTITY` | `REVOKE_IDENTITY` |
-    | `REVOKE_IDENTITY` | `CREATE_IDENTITY` |
+    | `REVOKE_IDENTITY` | `RESTORE_IDENTITY` |
+    | `RESTORE_IDENTITY` | `REVOKE_IDENTITY` |
     | `ATTACH_ASSERTION` | `RETRACT_ASSERTION` |
     | `RETRACT_ASSERTION` | `ATTACH_ASSERTION` |
     | `MERGE_IDENTITIES` | `SPLIT_IDENTITY` |
     | `SPLIT_IDENTITY` | `MERGE_IDENTITIES` |
     | `REASSIGN_ASSERTION` | `REASSIGN_ASSERTION` (endpoints swapped) |
     | `PROMOTE_ONTOLOGY_TERM` | none yet — see issue #45 |
+
+    The identity row is deliberately **not an involution** (issue #51,
+    ADR-0027): `CREATE_IDENTITY`'s inverse is `REVOKE_IDENTITY`, but
+    `REVOKE_IDENTITY`'s inverse is `RESTORE_IDENTITY`, not
+    `CREATE_IDENTITY`. Un-revoking is a *status flip back*
+    (`REVOKED @ E -> ACTIVE @ E`), not a create: `CREATE_IDENTITY` means
+    "this identity came into existence now" and stamps the committing
+    epoch by design, so using it to compensate a revoke silently re-stamps
+    the creation epoch and loses the original. `RESTORE_IDENTITY` flips the
+    status without touching `curation_epoch`, so the identity is findable
+    again as of the epoch that created it.
 
     `REVOKE_IDENTITY` (ADR-0025) closes the `CREATE_IDENTITY` gap. It is a
     **tombstone, not a deletion and not a supersession**: it sets
@@ -110,6 +124,20 @@ class CurationOperationType(StrEnum):
     over: nothing replaces a reversed identity, and
     `GraphReadOptions.include_superseded` would then resurrect it in
     exactly the history views that must show it as withdrawn.
+
+    `RESTORE_IDENTITY` (issue #51, ADR-0027) is the exact inverse of a
+    `REVOKE_IDENTITY`: it sets the status back to `ACTIVE`, retains the
+    record and its original `curation_epoch`, and thereby lifts the
+    assertion shield (the withdrawn identity's assertions become visible
+    again, each with its own status intact). It is a non-commit to restore
+    an identity that is not `REVOKED` — mirroring double-revoke semantics —
+    naming the identity and consuming no epoch. Because the restore commits
+    as its own epoch while leaving the record's epoch stamp alone, a
+    revoke/restore cycle is fully epoch-preserving in both directions; the
+    append-only commit history is where the status change is recorded. A
+    `RESTORE_IDENTITY` and a `REVOKE_IDENTITY` pair is stable: restoring
+    then revoking returns the identity to `REVOKED` at its original
+    creation epoch.
 
     `REVOKE_IDENTITY` also shields the identity's **assertions** (ADR-0026,
     issue #49): a default canonical read of a revoked identity's assertions
@@ -125,7 +153,8 @@ class CurationOperationType(StrEnum):
     that appears *before* its target's create is still an unknown identity.
     Revoking an already-revoked identity does **not** commit: like ADR-0013's
     ledger `revoke()` it fails loudly, naming the cause, instead of silently
-    consuming an epoch.
+    consuming an epoch. Restoring an identity that is *not* revoked is the
+    mirror image (ADR-0027): also a loud non-commit that consumes no epoch.
 
     Payloads (the shapes an executor must accept):
 
@@ -136,11 +165,16 @@ class CurationOperationType(StrEnum):
       revokes the entity that is actually in the graph, so a stale copy in
       the plan cannot overwrite it. The pre-revoke entity belongs in the
       operation's `reversal_data`, which is what lets `REVOKE_IDENTITY`
-      itself be compensated by a `CREATE_IDENTITY`.
+      itself be compensated by a `RESTORE_IDENTITY`.
+    - `RESTORE_IDENTITY` — `{"identity_id": <identity id>}`, plus an optional
+      `"reason"`. The same shape as `REVOKE_IDENTITY` and for the same
+      reason: the executor restores the entity actually in the graph, and the
+      pre-restore (`REVOKED`) entity belongs in `reversal_data`.
     """
 
     CREATE_IDENTITY = "CREATE_IDENTITY"
     REVOKE_IDENTITY = "REVOKE_IDENTITY"
+    RESTORE_IDENTITY = "RESTORE_IDENTITY"
     ATTACH_ASSERTION = "ATTACH_ASSERTION"
     MERGE_IDENTITIES = "MERGE_IDENTITIES"
     SPLIT_IDENTITY = "SPLIT_IDENTITY"
@@ -149,21 +183,30 @@ class CurationOperationType(StrEnum):
     PROMOTE_ONTOLOGY_TERM = "PROMOTE_ONTOLOGY_TERM"
 
 
-INVERSE_OPERATION_TYPES: dict[CurationOperationType, CurationOperationType] = {
-    CurationOperationType.CREATE_IDENTITY: CurationOperationType.REVOKE_IDENTITY,
-    CurationOperationType.REVOKE_IDENTITY: CurationOperationType.CREATE_IDENTITY,
-    CurationOperationType.ATTACH_ASSERTION: CurationOperationType.RETRACT_ASSERTION,
-    CurationOperationType.RETRACT_ASSERTION: CurationOperationType.ATTACH_ASSERTION,
-    CurationOperationType.MERGE_IDENTITIES: CurationOperationType.SPLIT_IDENTITY,
-    CurationOperationType.SPLIT_IDENTITY: CurationOperationType.MERGE_IDENTITIES,
-    CurationOperationType.REASSIGN_ASSERTION: CurationOperationType.REASSIGN_ASSERTION,
-}
-"""Which operation type compensates which (ADR-0025).
+INVERSE_OPERATION_TYPES: Mapping[CurationOperationType, CurationOperationType] = MappingProxyType(
+    {
+        CurationOperationType.CREATE_IDENTITY: CurationOperationType.REVOKE_IDENTITY,
+        CurationOperationType.REVOKE_IDENTITY: CurationOperationType.RESTORE_IDENTITY,
+        CurationOperationType.RESTORE_IDENTITY: CurationOperationType.REVOKE_IDENTITY,
+        CurationOperationType.ATTACH_ASSERTION: CurationOperationType.RETRACT_ASSERTION,
+        CurationOperationType.RETRACT_ASSERTION: CurationOperationType.ATTACH_ASSERTION,
+        CurationOperationType.MERGE_IDENTITIES: CurationOperationType.SPLIT_IDENTITY,
+        CurationOperationType.SPLIT_IDENTITY: CurationOperationType.MERGE_IDENTITIES,
+        CurationOperationType.REASSIGN_ASSERTION: CurationOperationType.REASSIGN_ASSERTION,
+    }
+)
+"""Which operation type compensates which (ADR-0025, ADR-0027).
 
 The compensator itself lives in `agentic-kgcs` — this is the *vocabulary*
 half, published here so the two repos cannot disagree about which type
 reverses which, and so "is this operation compensable at all?" is a lookup
 against the contract rather than a judgement re-made in each executor.
+
+The mapping is **read-only** (issue #48): it is a `MappingProxyType`, so
+in-place mutation raises `TypeError` rather than letting a consumer
+process-wide paper over `PROMOTE_ONTOLOGY_TERM`'s deliberate absence
+(issue #45). This matches the rest of `kg_contracts`, where every public
+container is immutable at rest.
 
 `PROMOTE_ONTOLOGY_TERM` is absent because it has no inverse yet (issue #45):
 absence here is the honest statement that a plan containing it is not fully
@@ -174,20 +217,21 @@ entry.
 rolled back today".** Membership here is a statement about the *vocabulary*.
 Whether an executor can actually apply a given type is a separate question
 with a different answer per adapter — the reference `MemoryGraphStore`
-implements only `CREATE_IDENTITY`, `ATTACH_ASSERTION` and `REVOKE_IDENTITY`,
-and raises `NotImplementedError` (Plan 3) for the rest. A caller checking
-compensability must consult both.
+implements `CREATE_IDENTITY`, `ATTACH_ASSERTION`, `REVOKE_IDENTITY` and
+`RESTORE_IDENTITY`, and raises `NotImplementedError` (Plan 3) for the rest. A
+caller checking compensability must consult both.
 
-**Known bound on `REVOKE_IDENTITY` -> `CREATE_IDENTITY` (issue #51).** That
-direction restores the identity's *status and visibility*, but not its
-original `curation_epoch`: `CREATE_IDENTITY` means "this identity came into
-existence now" and stamps the committing epoch, so a create-revoke-restore
-round trip returns the identity `ACTIVE` at a *new* epoch and an epoch-scoped
-read of the original creation epoch no longer finds it. The
-`CREATE_IDENTITY` -> `REVOKE_IDENTITY` direction — the one ADR-0025 exists to
-provide — is epoch-preserving and has no such bound. A true un-revoke
-(`REVOKED @ E` -> `ACTIVE @ E`) needs a `RESTORE_IDENTITY` type; that is
-issue #51, not this change."""
+The identity row is deliberately asymmetric (issue #51, ADR-0027).
+`INVERSE_OPERATION_TYPES[CREATE_IDENTITY]` is `REVOKE_IDENTITY`: a genuine
+create is undone by withdrawing it. But `INVERSE_OPERATION_TYPES[REVOKE_IDENTITY]`
+is `RESTORE_IDENTITY`, **not** `CREATE_IDENTITY`, because replaying a create
+to compensate a revoke re-stamps `curation_epoch` and loses the original
+creation epoch — the very failure ADR-0025 preserves the epoch to prevent,
+reappearing on the reverse leg. `RESTORE_IDENTITY` flips the status back to
+`ACTIVE` at the identity's original epoch, so both directions are
+epoch-preserving. The map is therefore not an involution at the
+`CREATE_IDENTITY` entry; every other entry pairs symmetrically, and a test
+pins the asymmetry so it cannot be "fixed" back by accident."""
 
 
 class CurationOperation(BaseModel):
