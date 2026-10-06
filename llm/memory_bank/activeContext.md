@@ -1,5 +1,48 @@
 # Active Context — agentic-kgis
 
+Update 2026-10-06: **`RESTORE_IDENTITY` closes issue #51, and the owner has
+ruled on PR #54's object-side open question** (ADR-0027 Proposed; no version
+change — release is separate).
+
+**(b) Un-revoke is now an operation (issue #51).** ADR-0025 §6 recorded that
+replaying `CREATE_IDENTITY` to compensate a revoke restores status but
+re-stamps `curation_epoch`, so an epoch-scoped read of the creation epoch
+loses the identity — and proved the cheap in-place repair unsound. The fix
+is the operation type ADR-0025 named: `CurationOperationType.RESTORE_IDENTITY`
+flips `REVOKED` back to `ACTIVE`, **retains the record and its original
+`curation_epoch`**, and commits as its own epoch (the append-only
+status-change entry). It lifts the ADR-0026 assertion shield — the
+withdrawn identity's assertions become visible again, each with its own
+status intact — so `REVOKE -> RESTORE -> REVOKE` works and both legs are
+epoch-preserving. Restoring an identity that is not `REVOKED` (active,
+already restored, or superseded) is a loud non-commit naming the identity
+and consuming no epoch, the exact mirror of double-revoke.
+
+`INVERSE_OPERATION_TYPES[REVOKE_IDENTITY]` is retargeted to
+`RESTORE_IDENTITY`; `CREATE_IDENTITY -> REVOKE_IDENTITY` stays. The identity
+row is therefore **deliberately not an involution** (`CREATE -> REVOKE ->
+RESTORE -> REVOKE`), and a test pins the asymmetry. The map is now an
+immutable `MappingProxyType`, closing issue #48: an in-place write raises
+`TypeError` instead of letting a consumer process-wide paper over
+`PROMOTE_ONTOLOGY_TERM`'s deliberate absence.
+
+**(a) The assertion shield is subject-only (owner decision, 2026-10-06).**
+An assertion on a **live** subject whose `object_identity` is revoked stays
+visible on default reads: withdrawing the object is not a retraction of the
+relation, and hiding a live subject's fact because of a later operation on
+another record is the write-amplification ADR-0026 argued against.
+`neighborhood()` keeps dropping the revoked target — a revoked node is not a
+live neighbour — which does not contradict the ruling, since the assertion
+is still served by `assertions_for(subject)` and the edge reaches the
+withdrawn endpoint only with `include_revoked=True`. Both behaviours are
+pinned in `GraphMutationStoreContract`, alongside the restore conformance
+tests (epoch preservation, shield lift, the two non-commit forms, the
+revoke/restore/revoke cycle, and assertion-flag cross-terms after restore).
+
+**Follow-ups, deliberately out of scope here:** `agentic-kgcs`'s compensator
+inverse table (its ADR-0020) and `agentic-kg`'s `Neo4jCanonicalGraphStore`
+must adopt `RESTORE_IDENTITY`.
+
 Update 2026-10-05: **the two remaining `REVOKE_IDENTITY` semantics holes
 from adversarial review of PR #46** (issues #49/#50, ADR-0026; no version
 change — release is separate).
