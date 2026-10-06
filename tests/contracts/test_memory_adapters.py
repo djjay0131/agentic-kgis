@@ -254,6 +254,20 @@ def _revoke_identity_batch(plan_id: str, *entities: CanonicalEntity) -> GraphMut
     )
 
 
+def _restore_identity_batch(plan_id: str, *entities: CanonicalEntity) -> GraphMutationBatch:
+    return GraphMutationBatch(
+        plan_id=plan_id,
+        operations=tuple(
+            CurationOperation(
+                type=CurationOperationType.RESTORE_IDENTITY,
+                payload={"identity_id": entity.identity_id, "reason": "un-revoke"},
+                reversal_data=entity.model_dump(mode="python"),
+            )
+            for entity in entities
+        ),
+    )
+
+
 def test_revoke_identity_reverses_a_committed_create_identity_run():
     # The defect this closes, end to end: a committed run of eight
     # CREATE_IDENTITY operations used to compensate to nothing. The counts
@@ -313,15 +327,14 @@ def test_revoke_identity_preserves_the_creation_epoch():
     assert as_of_creation.status is CurationStatus.REVOKED
 
 
-def test_revoke_round_trip_restores_the_identity_but_not_its_creation_epoch():
-    # Pins a KNOWN BOUND, not a desired property (issue #51, ADR-0025).
-    # INVERSE_OPERATION_TYPES[REVOKE_IDENTITY] is CREATE_IDENTITY, which
-    # restores status and visibility but re-stamps curation_epoch, because
-    # CREATE_IDENTITY means "came into existence now". So the reverse leg
-    # LOSES the original creation epoch even though the forward leg preserves
-    # it. This test exists so the ADR cannot quietly imply a round-trip
-    # property the vocabulary does not have, and so a future RESTORE_IDENTITY
-    # has a failing test to flip.
+def test_restore_round_trip_preserves_the_creation_epoch():
+    # Issue #51 / ADR-0027. The formerly-pinned bound is gone: a revoke is
+    # compensated by RESTORE_IDENTITY, not by replaying CREATE_IDENTITY, so the
+    # round trip restores the identity AT ITS ORIGINAL CREATION EPOCH. The old
+    # bound (CREATE_IDENTITY replay re-stamps the epoch) is still true of a
+    # create, which is why the map retargets the reverse leg rather than
+    # changing CREATE_IDENTITY — see
+    # `test_revoke_round_trip_via_create_identity_still_loses_the_epoch`.
     store = MemoryGraphStore()
     entity = make_entity(identity_id=new_identity_id("g1"))
 
@@ -336,12 +349,41 @@ def test_revoke_round_trip_restores_the_identity_but_not_its_creation_epoch():
     assert revoked is not None
     assert revoked.curation_epoch == creation_epoch  # forward leg: preserved
 
-    # Compensate the revoke from its own `reversal_data` — the PRE-revoke
-    # (ACTIVE) dump, which is what ADR-0025 prescribes reversal_data carries.
-    # Replaying the post-revoke copy instead would restore it still REVOKED.
     restored_result = store.apply(
-        _create_identity_batch("pl_redo", entity), preconditions=()
+        _restore_identity_batch("pl_redo", entity), preconditions=()
     )
+    assert restored_result.committed is True
+
+    restored = store.get_entity(entity.identity_id)
+    assert restored is not None
+    assert restored.status is CurationStatus.ACTIVE
+    # The reverse leg now preserves the original epoch too.
+    assert restored.curation_epoch == creation_epoch
+
+    # The property #51 asks for: the identity is findable again as of the epoch
+    # that originally created it, on a default (non-history) read.
+    as_of_creation = store.get_entity(
+        entity.identity_id, options=GraphReadOptions(curation_epoch=creation_epoch)
+    )
+    assert as_of_creation is not None
+    assert as_of_creation.identity_id == entity.identity_id
+
+
+def test_revoke_round_trip_via_create_identity_still_loses_the_epoch():
+    # The old bound remains true of the forward-leg primitive and is kept so
+    # the reason RESTORE_IDENTITY exists cannot rot: CREATE_IDENTITY still means
+    # "came into existence now" and re-stamps the epoch. This is why the map's
+    # reverse leg is RESTORE_IDENTITY and not CREATE_IDENTITY. It is NOT the
+    # contract's compensation path.
+    store = MemoryGraphStore()
+    entity = make_entity(identity_id=new_identity_id("g1"))
+
+    created = store.apply(_create_identity_batch("pl_create", entity), preconditions=())
+    creation_epoch = created.new_epoch
+    assert creation_epoch is not None
+
+    store.apply(_revoke_identity_batch("pl_undo", entity), preconditions=())
+    restored_result = store.apply(_create_identity_batch("pl_redo", entity), preconditions=())
     assert restored_result.committed is True
 
     restored = store.get_entity(entity.identity_id)
@@ -350,8 +392,6 @@ def test_revoke_round_trip_restores_the_identity_but_not_its_creation_epoch():
     assert restored.curation_epoch != creation_epoch  # ... the epoch is NOT
     assert restored.curation_epoch == restored_result.new_epoch
 
-    # The consequence that matters: the identity is no longer findable as of
-    # the epoch that originally created it.
     assert (
         store.get_entity(
             entity.identity_id,
