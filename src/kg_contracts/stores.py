@@ -89,7 +89,12 @@ class GraphReadOptions(BaseModel):
     (ADR-0026): `assertions_for(<revoked identity>)` returns nothing unless
     `include_revoked=True`, while each assertion's own status keeps gating
     it independently — so a superseded assertion on a revoked identity
-    needs both flags.
+    needs both flags. Restoring the identity (ADR-0027) lifts that shield
+    without mutating any assertion's status. The shield is on the
+    **subject** only: an assertion on a live subject remains visible by
+    default even when its `object_identity` is revoked (owner decision,
+    ADR-0027); `neighborhood()` still drops the revoked target, which is
+    not a live node.
 
     There is deliberately **no** ledger-visibility option here (ADR-0011,
     correcting ADR-0006's original field list). Under ADR-0006 the canonical

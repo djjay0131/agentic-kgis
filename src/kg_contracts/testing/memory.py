@@ -132,11 +132,13 @@ class MemoryCandidateSink:
 class MemoryGraphStore:
     """Dict/list-backed reference `GraphMutationStore` + `GraphReader`.
 
-    `apply()` supports `CREATE_IDENTITY`, `ATTACH_ASSERTION` (Plan 1) and
+    `apply()` supports `CREATE_IDENTITY`, `ATTACH_ASSERTION`,
     `REVOKE_IDENTITY` (ADR-0025 — the reference implementation of the
     `CREATE_IDENTITY` inverse, so a rollback can be demonstrated rather
-    than asserted); the other five `CurationOperationType` values raise
-    `NotImplementedError` naming Plan 3. Preconditions of kind `entity_version` are checked
+    than asserted) and `RESTORE_IDENTITY` (ADR-0027 — the exact inverse of
+    `REVOKE_IDENTITY`, preserving the original creation epoch); the other
+    five `CurationOperationType` values raise `NotImplementedError` naming
+    Plan 3. Preconditions of kind `entity_version` are checked
     against an internal per-identity version counter; any other
     precondition kind is not enforced by this reference adapter (Plan 1
     curation plans only ever emit `entity_version` preconditions). A
@@ -281,6 +283,50 @@ class MemoryGraphStore:
                 # Only `status` changes; the record itself is retained.
                 staged_entities[identity_id] = existing.model_copy(
                     update={"status": CurationStatus.REVOKED}
+                )
+                touched_subjects.append(identity_id)
+            elif operation.type is CurationOperationType.RESTORE_IDENTITY:
+                identity_id = operation.payload.get("identity_id")
+                if not isinstance(identity_id, str):
+                    return CommitResult(
+                        batch_id=batch.batch_id,
+                        committed=False,
+                        error=(
+                            "RESTORE_IDENTITY payload requires a string identity_id "
+                            f"(got {identity_id!r})"
+                        ),
+                    )
+                existing = staged_entities.get(identity_id, self._entities.get(identity_id))
+                if existing is None:
+                    return CommitResult(
+                        batch_id=batch.batch_id,
+                        committed=False,
+                        error=f"RESTORE_IDENTITY names an unknown identity: {identity_id!r}",
+                    )
+                # Issue #51 / ADR-0027: the mirror of the double-revoke rule. A
+                # restore with nothing to restore must fail loudly rather than
+                # commit a no-op epoch, so it is a non-commit naming the
+                # identity against the staged status (a batch that restores the
+                # same identity twice also fails). Only `REVOKED` can be
+                # restored; an ACTIVE or SUPERSEDED identity is not.
+                if existing.status is not CurationStatus.REVOKED:
+                    return CommitResult(
+                        batch_id=batch.batch_id,
+                        committed=False,
+                        error=(
+                            "RESTORE_IDENTITY targets an identity that is not revoked: "
+                            f"{identity_id!r} (status {existing.status.value})"
+                        ),
+                    )
+                # `curation_epoch` is deliberately NOT advanced, exactly as in a
+                # revoke: the epoch records when the identity was created, and
+                # moving it would make the identity vanish from epoch-scoped
+                # reads of the history that created it. The restore commits as
+                # its own epoch (the append-only status-change entry), while the
+                # record keeps its original stamp, so `REVOKED @ E -> ACTIVE @
+                # E` is epoch-preserving in both directions.
+                staged_entities[identity_id] = existing.model_copy(
+                    update={"status": CurationStatus.ACTIVE}
                 )
                 touched_subjects.append(identity_id)
             else:
