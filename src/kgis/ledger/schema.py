@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS audit_records (
     audit_id       INTEGER PRIMARY KEY AUTOINCREMENT,
     candidate_id   TEXT NOT NULL,
     transition_id  INTEGER,
-    kind           TEXT NOT NULL,          -- 'transition' | 'revoke' | 'erase'
+    kind           TEXT NOT NULL,          -- 'transition' | 'revoke' | 'erase' | 'redact'
     from_state     TEXT,
     to_state       TEXT,
     payload_hash   TEXT NOT NULL,
