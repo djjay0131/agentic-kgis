@@ -225,3 +225,59 @@ the status filters cross-adapter. Check them yourself until that lands.
 Still no tags and no PyPI release (issue #38), so a SHA remains the only exact
 pin. The version is `0.3.0`; `agentic-kgis>=0.3.0` is the constraint that means
 "has a reachable `AUTO` route and a reversible `CREATE_IDENTITY`".
+
+## Erasure must reach the evidence registry (issue #61)
+
+`SqliteCandidateLedger.erase()` governs the ledger row only. The passage text a
+candidate cites lives in the evidence registry — up to 4000 characters of source
+text (`_MAX_INLINE_CHARS`) plus the candidate's refs — so a ledger-only erase
+left that content readable. This is the KGIS upstream prerequisite U8 from the
+2026-10-07 KGPS provenance audit. **If you call `erase()` for a data-subject
+erasure, use `kgis.ErasureCoordinator` instead.**
+
+```python
+from kgis import ErasureCoordinator
+
+coordinator = ErasureCoordinator(ledger, registry)
+coordinator.erase(candidate_id, reason="gdpr", actor="dpo")
+```
+
+On `erase` the coordinator, in one operation:
+
+1. removes the erased candidate's evidence refs;
+2. redacts every evidence item those refs **orphaned** — `content=None`,
+   `payload_hash` retained, availability still `PRESENT`, plus a `redacted_at` /
+   `redaction_reason` marker on the row — so the passage stays provable by hash
+   but is no longer readable;
+3. appends a `kind='redact'` row to the ledger's append-only audit stream.
+
+Evidence still referenced by **any** other candidate (including a revoked one,
+which keeps its refs) is preserved untouched, and `registry.resolve()` keeps
+returning it.
+
+### Connection shapes
+
+- **Same connection** (one `sqlite3.Connection` handed to both stores): fully
+  atomic — the ledger erase and the registry cascade commit together.
+- **Separate connections**: both writes are staged and committed
+  registry-first, ledger-second. A failure before either commit rolls both
+  back; the rare ledger-commit failure after the registry commit raises
+  `ErasureIncompleteError` rather than hiding a partial result (the content is
+  already gone, so the privacy objective holds; retry finishes the ledger half).
+- **Separate connections to the same file** are *not* supported: SQLite admits
+  one writer at a time, so the coordinator fails closed (nothing commits) rather
+  than risking a partial erase. Pass the same connection when the two stores
+  share a file.
+
+### `revoke` does not redact
+
+`revoke()` is deliberately ledger-only: the payload and the evidence refs are
+retained, so `registry.resolve(candidate_id)` still returns the cited evidence
+after a revoke (ADR-0013 — the data is retained, only hidden from the default
+`ledger_entries()` listing). Only `erase` removes refs and redacts content.
+
+### Schema note
+
+Opening a pre-existing evidence database with `SqliteEvidenceRegistry` adds the
+`redacted_at` / `redaction_reason` columns in place; a fresh database has them
+from creation. No migration step is required on your side.
