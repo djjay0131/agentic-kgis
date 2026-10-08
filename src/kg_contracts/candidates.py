@@ -113,6 +113,11 @@ class SourceCoordinates(BaseModel):
     source_type: str
     locator: str
     fragment: str | None = None
+    source_version: str | None = None
+    """The read-version of the source this candidate was observed from
+    (ADR-0022): a database snapshot id, a watermark/cursor, a Kafka offset, a
+    CDC LSN. Additive and optional, so `locator` can stay the stable "source
+    as a whole" while the read-version travels alongside it."""
 
 
 class Representation(BaseModel):
@@ -171,6 +176,17 @@ class CandidateEnvelope(BaseModel):
     candidate_kind: str
     producer: str
     producer_run_id: str
+    model_id: str | None = None
+    """The producing model's identifier (ADR-0023). Optional and additive;
+    structured-sync candidates leave it `None`. Purely optional."""
+    model_version: str | None = None
+    """The producing model's version (ADR-0023). This is the value the
+    `kgis`-local workaround could not store readably — extraction now records
+    it directly on the candidate."""
+    extractor_version: str | None = None
+    """The producing extractor's version (ADR-0023)."""
+    prompt_version: str | None = None
+    """The prompt template version used to produce this candidate (ADR-0023)."""
     contract_version: str = CONTRACT_VERSION
     ontology_version: str
     evidence_refs: tuple[EvidenceRef, ...] = ()
