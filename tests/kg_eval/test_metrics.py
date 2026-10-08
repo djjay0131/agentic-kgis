@@ -111,6 +111,15 @@ class TestEvidenceRelationshipSemantics:
         assert m.unsupported_assertion_count == 1
         assert m.unverified_assertion_count == 1
 
+    def test_contextualizes_grounds_nothing(self) -> None:
+        # Context evidence situates a claim; it is not evidence for it, so it
+        # must not count as grounding (nor as verification).
+        m = evaluate_extraction(
+            relation_with_relationship(EvidenceRelationship.CONTEXTUALIZES), gold()
+        )
+        assert m.unsupported_assertion_count == 1
+        assert m.unverified_assertion_count == 1
+
 
 class TestHonestNull:
     def test_no_candidates_gives_insufficient_precision_not_zero(self) -> None:

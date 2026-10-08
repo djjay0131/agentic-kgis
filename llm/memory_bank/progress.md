@@ -185,15 +185,16 @@ ingestion implementations (Plan 4); kg_eval (Plan 6); KGCS Plans 3/5/6/7.
   `kgis.structured.evidence.StructuredEvidenceRecorder.link`), so real
   extraction output scored 100% unsupported and only test helpers ever used
   `SUPPORTS`. Split into two metrics: `unsupported_assertion_count` (**grounding**
-  — no PRESENT evidence with any relationship other than `CONTRADICTS`) and the
+  — no PRESENT `SUPPORTS` or `DERIVED_FROM` evidence; `CONTRADICTS` and
+  `CONTEXTUALIZES` do not ground) and the
   new `unverified_assertion_count` (**verification** — no PRESENT `SUPPORTS`).
   Both are wired through `ExtractionMetrics`, the Markdown report, and the
   docs-site API page. Added a regression test that runs a real `ExtractionPipeline`
   (through `RecordingCompletionClient`) into `evaluate_extraction` and asserts the
   grounded run reports 0 unsupported / 2 unverified; relationship-boundary unit
-  tests pin `DERIVED_FROM`/`SUPPORTS`/`CONTRADICTS`. 811 passed, ruff clean,
-  `mypy --strict` clean (78 files). Found in the KGPS provenance audit;
-  `kg_contracts` untouched.
+  tests pin `DERIVED_FROM`/`SUPPORTS`/`CONTRADICTS`/`CONTEXTUALIZES`. 812 passed,
+  ruff clean, `mypy --strict` clean (78 files). Found in the KGPS provenance
+  audit; `kg_contracts` untouched.
 
 Works now: `kg_contracts` v2; both ingestion modes (deterministic structured
 sync + LLM document extraction) on a persistent candidate ledger + evidence

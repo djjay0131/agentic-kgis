@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from kg_contracts.evidence import EvidenceRelationship
 from kg_eval import ArmConfig, ArmOutput, GoldEntity, GoldSet, evaluate_extraction
 from kgis.builders import EntityCandidateBuilder, SourceScoring
 from kgis.clock import FixedClock
@@ -123,11 +124,19 @@ def _gold() -> GoldSet:
 def test_real_extraction_produces_candidates_with_present_derived_from_refs() -> None:
     output = _run_extraction()
     assert len(output.candidates) == 2
-    # Every candidate's citation resolves to PRESENT evidence.
+    # Every candidate's citation resolves to PRESENT evidence...
     for candidate in output.candidates:
         assert candidate.evidence_refs
         resolved = [output.evidence.get(ref.evidence_id) for ref in candidate.evidence_refs]
         assert all(ev is not None for ev in resolved)
+        # ...and every producer-emitted ref is `DERIVED_FROM`. Asserting this
+        # keeps the grounding regression tethered to the real producer: if a
+        # producer ever starts emitting a different relationship, these tests
+        # fail loudly rather than silently passing on stale assumptions.
+        assert all(
+            ref.relationship is EvidenceRelationship.DERIVED_FROM
+            for ref in candidate.evidence_refs
+        )
 
 
 def test_real_extraction_is_grounded_not_reported_unsupported() -> None:

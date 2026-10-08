@@ -203,7 +203,7 @@ def relation_with_relationship(relationship: EvidenceRelationship) -> ArmOutput:
 
     Used to pin the grounding/verification split (issue #60) at the boundary:
     `DERIVED_FROM` grounds but does not verify, `SUPPORTS` does both, and
-    `CONTRADICTS` grounds nothing.
+    `CONTRADICTS` and `CONTEXTUALIZES` ground nothing.
     """
     eid = f"ev-rel-{relationship.value}"
     store = {eid: _evidence(eid, "games.csv#x", "played")}

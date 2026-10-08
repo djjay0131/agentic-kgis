@@ -144,9 +144,10 @@ measured (never a fabricated `0.0`), and an ablation reports
 grounding and verification are different claims:
 
 - `unsupported_assertion_count` — **grounding**: the candidate cites no PRESENT
-  evidence whose relationship is anything other than `CONTRADICTS`. KGIS
-  producers emit `DERIVED_FROM`, so this is the right measure for extraction and
-  structured-sync output.
+  evidence whose relationship is `SUPPORTS` or `DERIVED_FROM`. KGIS producers
+  emit `DERIVED_FROM`, so this is the right measure for extraction and
+  structured-sync output. `CONTRADICTS` (evidence against the claim) and
+  `CONTEXTUALIZES` (evidence situating the claim) do not ground it.
 - `unverified_assertion_count` — **verification**: the candidate cites no
   PRESENT `SUPPORTS` evidence. `SUPPORTS` is a producer's explicit claim that the
   evidence verifies the fact, which `DERIVED_FROM` deliberately does not assert.

@@ -17,8 +17,8 @@ against a `Candidate`/`Evidence` gold set):
 - ontology-violation count (only when an `OntologySpec` is supplied — otherwise
   `None`, honestly);
 - hallucination (false-positive) count, unsupported-assertion count (grounding:
-  no PRESENT evidence other than `CONTRADICTS`), and unverified-assertion count
-  (verification: no PRESENT `SUPPORTS` evidence);
+  no PRESENT `SUPPORTS` or `DERIVED_FROM` evidence), and unverified-assertion
+  count (verification: no PRESENT `SUPPORTS` evidence);
 - abstention and failure rates (denominator from the arm or the gold set;
   `None` when no denominator is known);
 - cost/latency, passed through as-is and `None` when unmeasured.
@@ -50,6 +50,11 @@ from kg_eval.matching import (
     match_attributes,
     match_entities,
     match_relations,
+)
+
+
+_GROUNDING_RELATIONSHIPS = frozenset(
+    {EvidenceRelationship.SUPPORTS, EvidenceRelationship.DERIVED_FROM}
 )
 
 
@@ -332,18 +337,20 @@ def _unsupported_assertions(output: ArmOutput) -> int:
     """Candidates with no PRESENT grounding evidence (grounding claim).
 
     Grounded means: the candidate cites at least one PRESENT evidence ref whose
-    relationship is anything other than `CONTRADICTS`. Every KGIS producer emits
-    `DERIVED_FROM` — `kgis.extraction.provenance.chunk_evidence_ref` and
-    `kgis.structured.evidence.StructuredEvidenceRecorder.link` — so a
+    relationship is `SUPPORTS` or `DERIVED_FROM` — the two relationships that
+    stand behind the claim itself. Every KGIS producer emits `DERIVED_FROM`
+    (`kgis.extraction.provenance.chunk_evidence_ref` and
+    `kgis.structured.evidence.StructuredEvidenceRecorder.link`), so a
     `SUPPORTS`-only rule scored real extraction output 100% unsupported (issue
-    #60). `CONTRADICTS` is deliberately not grounding: evidence that contradicts
-    a claim is not evidence for it.
+    #60). The complement is deliberately excluded: `CONTRADICTS` is evidence
+    *against* the claim, and `CONTEXTUALIZES` only situates the claim in its
+    surrounding material — neither is evidence for it.
     """
     return sum(
         1
         for candidate in output.candidates
         if not any(
-            ref.relationship is not EvidenceRelationship.CONTRADICTS
+            ref.relationship in _GROUNDING_RELATIONSHIPS
             for ref in _present_evidence_refs(output, candidate)
         )
     )
