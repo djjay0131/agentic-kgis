@@ -23,6 +23,7 @@ from kgis.builders import (
     entity_semantic_key,
 )
 from kgis.clock import Clock, FixedClock, SystemClock
+from kgis.erasure import ErasureCoordinator, ErasureIncompleteError, ErasureReport
 from kgis.errors import ConfigurationError, KgisError, RecordDataError, SourceReadError
 from kgis.extraction import ExtractionPipeline
 from kgis.ids import DeterministicIdStrategy, IdStrategy, RandomIdStrategy, new_run_id
@@ -61,6 +62,10 @@ __all__ = [
     "StructuredSyncConfig",
     "extraction",
     "structured",
+    # erasure cascade (issue #61)
+    "ErasureCoordinator",
+    "ErasureIncompleteError",
+    "ErasureReport",
     # sources
     "CsvRecordReader",
     "IterableRecordReader",
