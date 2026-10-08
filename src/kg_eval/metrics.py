@@ -16,7 +16,9 @@ against a `Candidate`/`Evidence` gold set):
 - evidence-reference resolvability and evidence-span coverage;
 - ontology-violation count (only when an `OntologySpec` is supplied — otherwise
   `None`, honestly);
-- hallucination (false-positive) count and unsupported-assertion count;
+- hallucination (false-positive) count, unsupported-assertion count (grounding:
+  no PRESENT evidence other than `CONTRADICTS`), and unverified-assertion count
+  (verification: no PRESENT `SUPPORTS` evidence);
 - abstention and failure rates (denominator from the arm or the gold set;
   `None` when no denominator is known);
 - cost/latency, passed through as-is and `None` when unmeasured.
@@ -34,7 +36,12 @@ from kg_contracts.candidates import (
     EntityCandidate,
     RelationCandidate,
 )
-from kg_contracts.evidence import Evidence, EvidenceAvailability, EvidenceRelationship
+from kg_contracts.evidence import (
+    Evidence,
+    EvidenceAvailability,
+    EvidenceRef,
+    EvidenceRelationship,
+)
 from kg_eval.arms import ArmOutput, CostLatency
 from kg_eval.bootstrap import BootstrapConfig, ConfidenceInterval, bootstrap_ci
 from kg_eval.goldset import EvidenceSpan, GoldSet
@@ -125,6 +132,7 @@ class ExtractionMetrics(BaseModel):
     ontology_violations: int | None
     hallucination_count: int
     unsupported_assertion_count: int
+    unverified_assertion_count: int
     abstention_rate: MetricValue
     failure_rate: MetricValue
     cost: CostLatency | None
@@ -165,10 +173,6 @@ def _prf(match: CategoryMatch, category: str, boot: BootstrapConfig | None) -> P
         f1 = MetricValue.measured(_f1(precision.value, recall.value))
 
     return PRF(precision=precision, recall=recall, f1=f1, tp=match.tp, fp=match.fp, fn=match.fn)
-
-
-def _present_supporting(refs_evidence: Sequence[Evidence]) -> bool:
-    return any(e.availability is EvidenceAvailability.PRESENT for e in refs_evidence)
 
 
 def _covers_span(
@@ -313,22 +317,54 @@ def _ontology_violations(output: ArmOutput, ontology: OntologySpec | None) -> in
     return violations
 
 
-def _unsupported_assertions(output: ArmOutput) -> int:
-    """Candidates with no resolvable PRESENT+SUPPORTS evidence backing them."""
+def _present_evidence_refs(output: ArmOutput, candidate: Candidate) -> list[EvidenceRef]:
+    """The candidate's refs that resolve to PRESENT evidence in the output store."""
     store = output.evidence
-    count = 0
-    for candidate in output.candidates:
-        supported = False
-        for ref in candidate.evidence_refs:
-            if ref.relationship is not EvidenceRelationship.SUPPORTS:
-                continue
-            evidence = store.get(ref.evidence_id)
-            if evidence is not None and evidence.availability is EvidenceAvailability.PRESENT:
-                supported = True
-                break
-        if not supported:
-            count += 1
-    return count
+    refs: list[EvidenceRef] = []
+    for ref in candidate.evidence_refs:
+        evidence = store.get(ref.evidence_id)
+        if evidence is not None and evidence.availability is EvidenceAvailability.PRESENT:
+            refs.append(ref)
+    return refs
+
+
+def _unsupported_assertions(output: ArmOutput) -> int:
+    """Candidates with no PRESENT grounding evidence (grounding claim).
+
+    Grounded means: the candidate cites at least one PRESENT evidence ref whose
+    relationship is anything other than `CONTRADICTS`. Every KGIS producer emits
+    `DERIVED_FROM` — `kgis.extraction.provenance.chunk_evidence_ref` and
+    `kgis.structured.evidence.StructuredEvidenceRecorder.link` — so a
+    `SUPPORTS`-only rule scored real extraction output 100% unsupported (issue
+    #60). `CONTRADICTS` is deliberately not grounding: evidence that contradicts
+    a claim is not evidence for it.
+    """
+    return sum(
+        1
+        for candidate in output.candidates
+        if not any(
+            ref.relationship is not EvidenceRelationship.CONTRADICTS
+            for ref in _present_evidence_refs(output, candidate)
+        )
+    )
+
+
+def _unverified_assertions(output: ArmOutput) -> int:
+    """Candidates with no PRESENT `SUPPORTS` evidence (verification claim).
+
+    Deliberately distinct from grounding: `SUPPORTS` is a producer's explicit
+    assertion that the evidence *verifies* the claim, whereas `DERIVED_FROM`
+    only records where the claim came from. A grounded-but-unverified extraction
+    is a real, reportable state, not a defect.
+    """
+    return sum(
+        1
+        for candidate in output.candidates
+        if not any(
+            ref.relationship is EvidenceRelationship.SUPPORTS
+            for ref in _present_evidence_refs(output, candidate)
+        )
+    )
 
 
 def _rate(numerator: int, denominator: int | None, note: str) -> MetricValue:
@@ -376,6 +412,7 @@ def evaluate_extraction(
         ontology_violations=_ontology_violations(output, ontology),
         hallucination_count=hallucination,
         unsupported_assertion_count=_unsupported_assertions(output),
+        unverified_assertion_count=_unverified_assertions(output),
         abstention_rate=_rate(output.abstained, attempted, "no attempted-input count known"),
         failure_rate=_rate(output.failed, attempted, "no attempted-input count known"),
         cost=output.cost,

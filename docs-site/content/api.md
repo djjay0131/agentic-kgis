@@ -140,6 +140,21 @@ Under the honest-null policy a metric is `None` with a reason when it cannot be
 measured (never a fabricated `0.0`), and an ablation reports
 `INSUFFICIENT_EVIDENCE` / `NO_IMPROVEMENT` rather than a false win.
 
+`ExtractionMetrics` reports two distinct evidence-coverage counts, because
+grounding and verification are different claims:
+
+- `unsupported_assertion_count` — **grounding**: the candidate cites no PRESENT
+  evidence whose relationship is anything other than `CONTRADICTS`. KGIS
+  producers emit `DERIVED_FROM`, so this is the right measure for extraction and
+  structured-sync output.
+- `unverified_assertion_count` — **verification**: the candidate cites no
+  PRESENT `SUPPORTS` evidence. `SUPPORTS` is a producer's explicit claim that the
+  evidence verifies the fact, which `DERIVED_FROM` deliberately does not assert.
+
+A grounded-but-unverified run therefore has `unsupported_assertion_count == 0`
+and `unverified_assertion_count > 0`: the facts are traceable to their source
+passages, but nothing has separately verified them.
+
 ## Where to read more
 
 - Package exports: `src/kgis/__init__.py`, `src/kg_contracts/__init__.py`,
