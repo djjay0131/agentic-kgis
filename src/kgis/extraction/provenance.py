@@ -63,14 +63,18 @@ def build_chunk_evidence(
 ) -> Evidence:
     """PRESENT evidence for the passage an extractor read.
 
-    `provenance` is where the model and prompt version are recorded — the
-    envelope has no field for them, so the citing candidate carries them
-    transitively through this evidence (see ADR-0023)."""
+    `provenance` is the audit-grade record of the model + prompt versions
+    (ADR-0023): the candidate self-reports its `model_id`/`model_version`/
+    `extractor_version`/`prompt_version`, while this evidence row is the
+    authoritative record the candidate cites. `model_version` is recorded here
+    as well, so the evidence reason — not only the evidence id — names which
+    model version produced it."""
     provenance = Provenance(
         source=chunk.locator,
         source_ref=chunk.fragment,
         actor=config.extractor_id,
         model=config.model_id,
+        model_version=config.model_version,
         prompt_version=config.prompt_version,
     )
     return present_evidence(

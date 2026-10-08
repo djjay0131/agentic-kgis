@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from kg_contracts.candidates import SourceCoordinates
 from kg_contracts.stores import CandidateSink, SubmissionStatus
 from kg_contracts.testing.contract import CandidateSinkContract
 from kg_contracts.testing.factories import make_entity_candidate
@@ -26,6 +27,34 @@ def test_duplicate_semantic_key_writes_no_second_row():
     assert r2.outcomes[0].status is SubmissionStatus.DUPLICATE
     count = ledger._conn.execute("SELECT COUNT(*) c FROM ledger_entries").fetchone()["c"]
     assert count == 1
+
+
+def test_new_version_fields_round_trip_through_the_ledger():
+    """ADR-0022/ADR-0023 fields survive submit -> ledger_entries() via
+    `payload_json`, with no schema migration (the payload is JSON, not
+    per-field columns)."""
+    ledger = SqliteCandidateLedger(":memory:")
+    coords = SourceCoordinates(
+        source_type="sqlite", locator="sqlite://players@snapshot=snap_42",
+        fragment="id=1", source_version="snap_42",
+    )
+    candidate = make_entity_candidate(key="versioned", source_coordinates=coords).model_copy(
+        update={
+            "model_id": "claude-fake",
+            "model_version": "2026-08",
+            "extractor_version": "7",
+            "prompt_version": "p3",
+        }
+    )
+    assert ledger.submit([candidate]).outcomes[0].status is SubmissionStatus.RECEIVED
+
+    [entry] = ledger.ledger_entries()
+    got = entry.candidate
+    assert got.model_id == "claude-fake"
+    assert got.model_version == "2026-08"
+    assert got.extractor_version == "7"
+    assert got.prompt_version == "p3"
+    assert got.source_coordinates.source_version == "snap_42"
 
 
 def test_boundary_distinct_candidates_are_not_falsely_deduped():
