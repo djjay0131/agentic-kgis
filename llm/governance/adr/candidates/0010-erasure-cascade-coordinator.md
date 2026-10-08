@@ -67,10 +67,36 @@ only `erase` removes refs and redacts content.
   back. The residual window — registry committed, ledger commit failing — is
   surfaced as `ErasureIncompleteError`: the passage is already redacted (the
   privacy objective holds) and only the ledger half is unfinished.
-- **Separate connections to the same file**: unsupported. SQLite admits one
-  writer at a time, so staging both transactions fails closed before any commit;
-  the coordinator rolls both back and re-raises. Consumers sharing a file must
-  pass the same connection.
+- **Separate connections to the same file**: unsupported and rejected at
+  `ErasureCoordinator` construction with `ConfigurationError`, by comparing each
+  connection's `PRAGMA database_list` file. SQLite admits one writer at a time,
+  so the cascade could not be staged atomically; failing at construction is
+  clearer than a later opaque lock error. Consumers sharing a file must pass the
+  same connection object to both stores.
+
+### Redaction is terminal; erase is idempotent
+
+Because evidence ids are deterministic (`kgis.extraction.provenance`),
+re-ingesting an erased document re-`put`s the *same* ids. A plain
+`INSERT OR REPLACE` would rewrite the row, restoring the passage and clearing
+the marker with no audit, so `SqliteEvidenceRegistry._put_stmt` treats a
+redacted id as terminal: a put whose row already carries `redacted_at` is a
+no-op — content stays `NULL` and the marker stays set. Re-ingestion can never
+un-erase content.
+
+Erasing an already-erased candidate is likewise a no-op: `ErasureCoordinator.
+erase` detects the `erased_at` tombstone and returns
+`ErasureReport(already_erased=True)` with empty tuples, recording no second
+erase transition and no duplicate redaction audit.
+
+### Orphan detection sees registered refs only
+
+The orphan test queries the `evidence_refs` table, which is populated by
+`add_refs`. A citation carried only inside a `Candidate`'s payload
+(`evidence_refs`) but never registered is invisible to the check, so its
+evidence is treated as orphaned. This is documented on `_orphan_evidence_stmt`
+and in the adopter notes; the contract is that citations the cascade must honour
+are registered through `add_refs`.
 
 ## Rationale
 

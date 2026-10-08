@@ -255,6 +255,27 @@ Evidence still referenced by **any** other candidate (including a revoked one,
 which keeps its refs) is preserved untouched, and `registry.resolve()` keeps
 returning it.
 
+Redaction is **terminal**. Evidence ids are deterministic
+(`kgis.extraction.provenance`), so re-ingesting an erased document re-collects
+the same ids; a `registry.put(...)` of an already-redacted id does **not**
+restore the passage text and does **not** clear the `redacted_at` /
+`redaction_reason` marker. Re-extraction is therefore safe and idempotent:
+content is never un-erased by a later ingest.
+
+Erasing a candidate that is already erased is a **no-op**: no second erase
+transition and no duplicate redaction audit are recorded.
+`ErasureReport.already_erased` is `True` and its tuples are empty.
+
+### Orphan detection sees only registered refs
+
+The cascade decides an evidence item is orphaned by asking the `evidence_refs`
+table whether *any* subject still cites it. That table is populated by
+`registry.add_refs(...)`. A citation that lives **only inside a candidate
+payload** (`Candidate.evidence_refs`) but was never registered with `add_refs`
+is invisible to the orphan check, so its evidence will be treated as orphaned
+and redacted. If you want evidence kept because a payload still cites it,
+register the citation with `add_refs`; do not rely on the payload alone.
+
 ### Connection shapes
 
 - **Same connection** (one `sqlite3.Connection` handed to both stores): fully
@@ -264,10 +285,11 @@ returning it.
   back; the rare ledger-commit failure after the registry commit raises
   `ErasureIncompleteError` rather than hiding a partial result (the content is
   already gone, so the privacy objective holds; retry finishes the ledger half).
-- **Separate connections to the same file** are *not* supported: SQLite admits
-  one writer at a time, so the coordinator fails closed (nothing commits) rather
-  than risking a partial erase. Pass the same connection when the two stores
-  share a file.
+- **Separate connections to the same file** are *not* supported and are
+  rejected when the coordinator is constructed: `ErasureCoordinator(ledger,
+  registry)` raises `ConfigurationError` naming the shared file, rather than
+  letting the problem surface later as an opaque SQLite lock error. Pass the
+  same connection object to both stores when they share a file.
 
 ### `revoke` does not redact
 

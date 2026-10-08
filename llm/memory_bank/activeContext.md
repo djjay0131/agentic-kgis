@@ -1,5 +1,29 @@
 # Active Context — agentic-kgis
 
+Update 2026-10-08 (review round): **U8 erasure cascade hardened against
+re-ingestion and idempotency gaps** (PR #65 review findings; no version change).
+Four findings on the erasure cascade, all addressed:
+
+1. **Re-ingestion un-redacts (MEDIUM privacy).** Evidence ids are deterministic,
+   so re-extracting an erased document re-`put`s the same ids; `INSERT OR
+   REPLACE` rewrote the row, restoring content and clearing the marker with no
+   audit. `SqliteEvidenceRegistry._put_stmt` now treats a redacted id as
+   **terminal** — a put of a row carrying `redacted_at` is a no-op, so content
+   stays `NULL` and the marker survives (skip, not raise: re-ingestion is a
+   normal pipeline path). Pinned for both `put` and `put_many`.
+2. **Orphan check scope (LOW).** Documented on `_orphan_evidence_stmt` and in
+   the adopter notes: the check sees only refs registered via `add_refs`;
+   evidence cited only inside a candidate payload is treated as orphaned.
+3. **Idempotent erase (LOW).** `ErasureCoordinator.erase` detects `erased_at`
+   and returns `ErasureReport(already_erased=True)` with empty tuples, recording
+   no second erase transition and no duplicate redaction audit.
+4. **Same-file separate connections (NOTE).** `ErasureCoordinator.__init__` now
+   compares each connection's `PRAGMA database_list` file and raises
+   `ConfigurationError` naming the shared file, instead of failing later as an
+   opaque SQLite lock error.
+
+824 passed, ruff clean, `mypy --strict` clean (79 files), governance 4/4.
+
 Update 2026-10-08: **ledger erasure now cascades to the evidence registry**
 (issue #61, ADR candidate 0010; no version change — release is separate).
 KGPS upstream prerequisite **U8** (2026-10-07 audit): `SqliteCandidateLedger.erase()`
