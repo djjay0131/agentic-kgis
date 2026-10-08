@@ -17,8 +17,11 @@ from kg_contracts.evidence import (
 from kg_contracts.testing.factories import make_entity_candidate
 
 from kgis.erasure import ErasureCoordinator, ErasureIncompleteError
+from kgis.errors import ConfigurationError
 from kgis.evidence.schema import SCHEMA_SQL as EVIDENCE_SCHEMA
 from kgis.evidence.store import SqliteEvidenceRegistry
+from kgis.extraction.documents import Document
+from kgis.extraction.provenance import build_document_evidence, document_evidence_id
 from kgis.ledger.config import BASEBALL_AI_PROFILE, ConsumerProfile
 from kgis.ledger.schema import SCHEMA_SQL as LEDGER_SCHEMA
 from kgis.ledger.store import SqliteCandidateLedger
@@ -328,3 +331,87 @@ def test_redaction_derives_a_hash_when_none_was_recorded() -> None:
     assert evidence.content is None
     assert evidence.payload_hash is not None
     assert evidence.availability is EvidenceAvailability.PRESENT
+
+
+@pytest.mark.parametrize("method", ["put", "put_many"])
+def test_reingestion_does_not_unredact_evidence(method: str) -> None:
+    """Re-extracting an erased document must not restore its passage text.
+
+    Evidence ids are deterministic, so a second extraction over the same
+    document re-`put`s the same id. Redaction is terminal: the content stays
+    NULL and the marker survives (issue #61 review finding 1).
+    """
+    ledger, registry = _make_stores(False)
+    candidate = make_entity_candidate(key="erase/reingest")
+    ledger.submit([candidate])
+    document = Document(
+        doc_id="doc-reingest",
+        text="Ada is a shortstop known for hitting.",
+        source_type="scouting_report",
+    )
+    evidence_id = document_evidence_id(document)
+    registry.put(build_document_evidence(document, observed_at=NOW))
+    _cite(registry, candidate.candidate_id, evidence_id)
+
+    ErasureCoordinator(ledger, registry).erase(
+        candidate.candidate_id, reason="gdpr", actor="dpo"
+    )
+    assert registry.get(evidence_id).content is None
+    marker_before = registry.redaction(evidence_id)
+    assert marker_before is not None and marker_before[0] is not None
+
+    # Re-run extraction over the same document, whichever write path is used.
+    reingested = build_document_evidence(document, observed_at=NOW)
+    if method == "put":
+        registry.put(reingested)
+    else:
+        registry.put_many([reingested])
+
+    after = registry.get(evidence_id)
+    assert after is not None
+    assert after.content is None                          # never restored
+    assert after.payload_hash == document.content_hash     # hash still there
+    assert registry.redaction(evidence_id) == marker_before  # marker untouched
+
+
+@pytest.mark.parametrize("shared", [True, False])
+def test_erase_is_idempotent(shared: bool) -> None:
+    """A second erase is a no-op: no duplicate transition or redaction audit."""
+    ledger, registry = _make_stores(shared)
+    candidate = make_entity_candidate(key="erase/idempotent")
+    ledger.submit([candidate])
+    _present(registry, "ev_idem")
+    _cite(registry, candidate.candidate_id, "ev_idem")
+    coordinator = ErasureCoordinator(ledger, registry)
+
+    first = coordinator.erase(candidate.candidate_id, reason="gdpr", actor="dpo")
+    assert first.already_erased is False
+    assert first.redacted == ("ev_idem",)
+    audit_after_first = list(ledger._audit.records_for(candidate.candidate_id))
+
+    second = coordinator.erase(candidate.candidate_id, reason="gdpr", actor="dpo")
+
+    assert second.already_erased is True
+    assert second.removed_refs == ()
+    assert second.redacted == ()
+    assert second.preserved == ()
+    # Nothing was staged again: no second erase transition, no redact row.
+    assert list(ledger._audit.records_for(candidate.candidate_id)) == audit_after_first
+
+
+def test_same_file_separate_connections_are_rejected(tmp_path) -> None:
+    """Two connections to one file cannot be atomic; fail at construction."""
+    database = tmp_path / "shared.db"
+    ledger_conn = sqlite3.connect(str(database))
+    ledger_conn.row_factory = sqlite3.Row
+    ledger_conn.executescript(LEDGER_SCHEMA)
+    ledger_conn.commit()
+    registry_conn = sqlite3.connect(str(database))
+    registry_conn.row_factory = sqlite3.Row
+    registry_conn.executescript(EVIDENCE_SCHEMA)
+    registry_conn.commit()
+    ledger = SqliteCandidateLedger(ledger_conn, profile=BASEBALL_AI_PROFILE)
+    registry = SqliteEvidenceRegistry(registry_conn)
+
+    with pytest.raises(ConfigurationError, match="same SQLite file"):
+        ErasureCoordinator(ledger, registry)

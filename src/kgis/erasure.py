@@ -32,20 +32,43 @@ The two stores share a SQLite database only sometimes, so both are handled:
   window — registry committed, ledger commit failing — is surfaced as
   `ErasureIncompleteError`, never hidden.
 
-Deliberate limit: with separate connections to the *same* database file, SQLite
-admits one writer at a time, so staging both transactions raises a lock error
-before anything commits; the coordinator rolls both back and re-raises. Wire the
-two stores to the *same connection* when they share a file.
+Deliberate limit: with separate connections to the *same* database file, two
+SQLite writers cannot both stage changes, so the cascade can never be atomic.
+`ErasureCoordinator` refuses that shape at construction with
+`ConfigurationError` (detected by comparing each connection's `PRAGMA
+database_list` file), rather than letting it fail later as an opaque lock error.
+Wire the two stores to the *same connection* when they share a file.
+
+Idempotence: erasing an already-erased candidate is a no-op. The ledger row
+keeps its `erased_at` tombstone and the operation records no second erase
+transition and no duplicate redaction audit; `ErasureReport.already_erased` is
+`True`.
 """
 
 from __future__ import annotations
 
+import os
+import sqlite3
 from dataclasses import dataclass
 
-from kgis.errors import KgisError
+from kgis.errors import ConfigurationError, KgisError
 from kgis.evidence.store import SqliteEvidenceRegistry
 from kgis.ledger.row import _iso
 from kgis.ledger.store import SqliteCandidateLedger
+
+
+def _database_file(conn: sqlite3.Connection) -> str | None:
+    """The on-disk path behind a connection's `main` database, or `None`.
+
+    `None` for an in-memory database (SQLite reports an empty file), so two
+    distinct `:memory:` connections are correctly seen as *different*
+    databases, not the same one.
+    """
+    for row in conn.execute("PRAGMA database_list").fetchall():
+        if row[1] == "main":
+            path: str = row[2]
+            return path or None
+    return None
 
 
 class ErasureIncompleteError(KgisError):
@@ -68,31 +91,57 @@ class ErasureReport:
 
     `removed_refs` is every evidence id the candidate cited; `redacted` is the
     orphaned subset whose inline content was dropped; `preserved` is the subset
-    still referenced elsewhere and therefore left readable.
+    still referenced elsewhere and therefore left readable. `already_erased` is
+    `True` for the idempotent no-op path, where the candidate already carried an
+    erasure tombstone and nothing was written.
     """
 
     candidate_id: str
     removed_refs: tuple[str, ...]
     redacted: tuple[str, ...]
     preserved: tuple[str, ...]
+    already_erased: bool = False
 
 
 class ErasureCoordinator:
     """Erase a candidate across the ledger *and* its evidence atomically.
 
-    Construct once per `(ledger, registry)` pair. The pair is not validated
-    against transaction safety; it is the caller's job to pass two connections
-    to the same file only when they are the same connection object.
+    Construct once per `(ledger, registry)` pair. Two different connections to
+    the *same* database file are rejected here with `ConfigurationError`:
+    SQLite admits one writer, so the cascade could not be staged atomically and
+    would surface later as an opaque lock error. Passing the *same* connection
+    object to both stores is the supported shared-file shape.
     """
 
     def __init__(
         self, ledger: SqliteCandidateLedger, registry: SqliteEvidenceRegistry
     ) -> None:
+        ledger_conn = ledger._conn
+        registry_conn = registry._conn
+        if ledger_conn is not registry_conn:
+            ledger_file = _database_file(ledger_conn)
+            registry_file = _database_file(registry_conn)
+            if (
+                ledger_file is not None
+                and registry_file is not None
+                and os.path.realpath(ledger_file) == os.path.realpath(registry_file)
+            ):
+                raise ConfigurationError(
+                    "ledger and evidence registry point at the same SQLite file "
+                    f"({ledger_file!r}) through different connections; SQLite admits "
+                    "one writer, so the erasure cascade cannot be atomic. Pass the "
+                    "same connection object to both stores."
+                )
         self._ledger = ledger
         self._registry = registry
 
     def erase(self, candidate_id: str, *, reason: str, actor: str) -> ErasureReport:
         """Erase `candidate_id` and cascade to its evidence.
+
+        Idempotent: erasing an already-erased candidate writes nothing and
+        returns `ErasureReport(already_erased=True)` with empty tuples, so a
+        retry never records a second erase transition or a duplicate redaction
+        audit.
 
         Raises `PermissionError` when the ledger's consumer profile has not
         enabled erasure, `KeyError` when no row carries `candidate_id`, and
@@ -103,6 +152,14 @@ class ErasureCoordinator:
         row = self._ledger.row(candidate_id)
         if row is None:
             raise KeyError(f"no ledger entry for candidate_id {candidate_id!r}")
+        if row.is_erased:
+            return ErasureReport(
+                candidate_id=candidate_id,
+                removed_refs=(),
+                redacted=(),
+                preserved=(),
+                already_erased=True,
+            )
         redacted_at = _iso(self._ledger._now())
         assert redacted_at is not None  # self._ledger._now() never returns None
 
