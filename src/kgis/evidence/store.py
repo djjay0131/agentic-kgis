@@ -48,8 +48,32 @@ class SqliteEvidenceRegistry:
     def close(self) -> None:
         self._conn.close()
 
+    def _row_is_redacted(self, evidence_id: str) -> bool:
+        """Does this id already carry a redaction marker?
+
+        The marker column is the authority, not `content is None` alone: an
+        ABSENT/ERROR evidence row never had content, but it was never redacted
+        either, so it may still be written.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM evidence WHERE evidence_id = ? AND redacted_at IS NOT NULL",
+            (evidence_id,),
+        ).fetchone()
+        return row is not None
+
     def _put_stmt(self, evidence: Evidence) -> None:
-        """Execute the INSERT for one Evidence without committing."""
+        """Execute the INSERT for one Evidence without committing.
+
+        Redaction is **terminal** (issue #61). Evidence ids are deterministic
+        (`kgis.extraction.provenance`), so re-extracting an erased document
+        re-collects the *same* id; a plain `INSERT OR REPLACE` would rewrite the
+        row, restoring the passage text and clearing the `redacted_at` /
+        `redaction_reason` marker — an un-redaction with no audit. A put of an id
+        whose row is already redacted is therefore a no-op: the content stays
+        dropped and the marker stays set. Content is never restored once erased.
+        """
+        if self._row_is_redacted(evidence.evidence_id):
+            return
         vt = evidence.valid_time
         self._conn.execute(
             "INSERT OR REPLACE INTO evidence (evidence_id, source_type, source_locator, "
@@ -161,6 +185,14 @@ class SqliteEvidenceRegistry:
         Checked against the whole `evidence_refs` table, not just live
         candidates: a revoked (but not erased) candidate retains its refs, so
         evidence it shares must stay readable. "Orphan" means zero refs left.
+
+        Scope limit: this sees only citations registered through `add_refs`
+        (and its non-committing variant). A `Candidate` that carries refs
+        **inside its payload** (`evidence_refs`) but whose subject was never
+        registered here is invisible to this check, so its evidence looks
+        orphaned and will be redacted even though the payload still cites it.
+        Register refs with `add_refs` for every citation you want the orphan
+        check to honour (see the adopter notes).
         """
         orphans: list[str] = []
         for evidence_id in evidence_ids:
