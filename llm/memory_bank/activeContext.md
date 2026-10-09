@@ -1,5 +1,66 @@
 # Active Context — agentic-kgis
 
+Update 2026-10-08 (review round): **U8 erasure cascade hardened against
+re-ingestion and idempotency gaps** (PR #65 review findings; no version change).
+Four findings on the erasure cascade, all addressed:
+
+1. **Re-ingestion un-redacts (MEDIUM privacy).** Evidence ids are deterministic,
+   so re-extracting an erased document re-`put`s the same ids; `INSERT OR
+   REPLACE` rewrote the row, restoring content and clearing the marker with no
+   audit. `SqliteEvidenceRegistry._put_stmt` now treats a redacted id as
+   **terminal** — a put of a row carrying `redacted_at` is a no-op, so content
+   stays `NULL` and the marker survives (skip, not raise: re-ingestion is a
+   normal pipeline path). Pinned for both `put` and `put_many`.
+2. **Orphan check scope (LOW).** Documented on `_orphan_evidence_stmt` and in
+   the adopter notes: the check sees only refs registered via `add_refs`;
+   evidence cited only inside a candidate payload is treated as orphaned.
+3. **Idempotent erase (LOW).** `ErasureCoordinator.erase` detects `erased_at`
+   and returns `ErasureReport(already_erased=True)` with empty tuples, recording
+   no second erase transition and no duplicate redaction audit.
+4. **Same-file separate connections (NOTE).** `ErasureCoordinator.__init__` now
+   compares each connection's `PRAGMA database_list` file and raises
+   `ConfigurationError` naming the shared file, instead of failing later as an
+   opaque SQLite lock error.
+
+824 passed, ruff clean, `mypy --strict` clean (79 files), governance 4/4.
+
+Update 2026-10-08: **ledger erasure now cascades to the evidence registry**
+(issue #61, ADR candidate 0010; no version change — release is separate).
+KGPS upstream prerequisite **U8** (2026-10-07 audit): `SqliteCandidateLedger.erase()`
+nulled only `payload_json` and left the evidence registry untouched, so up to
+4000 chars of passage text (`_MAX_INLINE_CHARS`) plus the candidate's refs
+survived a data-subject erasure and `registry.resolve(candidate_id)` still
+returned them. The fix is `kgis.erasure.ErasureCoordinator` — a cross-store
+operation, not a ledger collaborator, so the ledger package does not depend on
+`kgis.evidence` and `erase` does not change behaviour depending on wiring. On
+`erase` it removes the candidate's refs, redacts every evidence item those refs
+**orphaned** (`content=None`, `payload_hash` retained — derived from the content
+when the evidence never had a hash — availability still `PRESENT`, plus durable
+`redacted_at`/`redaction_reason` columns on the `evidence` row), and appends one
+`kind='redact'` audit record per redaction to the ledger's append-only stream.
+"Orphan" is *zero refs*, not *zero live-candidate refs*: a revoked candidate
+keeps its refs (ADR-0013), so evidence it shares stays readable. `revoke()` is
+deliberately ledger-only and retains refs — the issue's open question answered
+as "yes, `resolve()` still returns refs after a revoke", pinned by a test.
+
+**Connection shapes are the load-bearing design detail.** Same connection (one
+`sqlite3.Connection` handed to both stores): the erase transition, ref removal,
+redaction and audit rows run in one transaction and are fully atomic. Separate
+connections (the ordinary case): writes are staged and committed
+registry-first, ledger-second, so a pre-commit failure rolls both back and the
+content is unreadable before the ledger row governance lands; the residual
+window (registry committed, ledger commit failing) raises
+`ErasureIncompleteError` instead of hiding a partial result. Separate
+connections to the *same file* are unsupported and fail closed (SQLite admits
+one writer) — pass the same connection. The evidence `evidence` table gains two
+nullable columns, migrated in place when a registry opens an older DB (no
+`kg_contracts` edit). Fourteen tests parametrise same/separate connection over
+orphan redaction, shared-evidence preservation, the audit row, mid-cascade
+rollback, revoke retention, the profile gate, the missing-candidate error, the
+derived-hash edge, and the v1→v2 column migration. 817 passed, ruff clean,
+`mypy --strict` clean (79 files). Design recorded as ADR candidate 0010
+(awaiting owner promotion); KGPS tracking issue djjay0131/agentic-kgps#1.
+
 Update 2026-10-06: **`RESTORE_IDENTITY` closes issue #51, and the owner has
 ruled on PR #54's object-side open question** (ADR-0027 Proposed; no version
 change — release is separate).

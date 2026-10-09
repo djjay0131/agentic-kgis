@@ -1,6 +1,9 @@
-# ADR candidates — all promoted
+# ADR candidates
 
-As of **2026-08-22**, every ADR candidate that was in this directory has been
+Open candidate: [0010 erasure-cascade-coordinator](0010-erasure-cascade-coordinator.md)
+(issue #61, 2026-10-08) — awaiting owner review/promotion.
+
+As of **2026-08-22**, every ADR candidate that was in this directory had been
 reviewed by the architecture owner and **promoted to a numbered, accepted ADR**
 in `llm/governance/adr/`. This directory is retained only for the mapping below
 and for old links; a new architectural decision goes straight into
