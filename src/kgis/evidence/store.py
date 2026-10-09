@@ -146,6 +146,28 @@ class SqliteEvidenceRegistry:
             for r in self._conn.execute(sql, params).fetchall()
         ]
 
+    def subjects_for(
+        self, evidence_id: str, relationship: EvidenceRelationship | None = None
+    ) -> list[str]:
+        """The subjects that cite `evidence_id` — the reverse of `refs_for`.
+
+        Backed by `ix_refs_evidence` so this is an index probe, not a scan.
+        `DISTINCT` collapses the same subject citing one evidence item under
+        several relationships; passing `relationship` narrows to citations of
+        that relationship. Ordered for a deterministic result. KGPS uses this
+        to compute the re-validation set after a retraction
+        (`impacted_by(evidence_id)`).
+        """
+        sql = "SELECT DISTINCT subject_id FROM evidence_refs WHERE evidence_id = ?"
+        params: list[object] = [evidence_id]
+        if relationship is not None:
+            sql += " AND relationship = ?"
+            params.append(relationship.value)
+        sql += " ORDER BY subject_id"
+        return [
+            r["subject_id"] for r in self._conn.execute(sql, params).fetchall()
+        ]
+
     def resolve(
         self, subject_id: str, relationship: EvidenceRelationship | None = None
     ) -> list[Evidence]:

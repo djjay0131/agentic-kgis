@@ -140,6 +140,16 @@ def test_memory_graph_store_mark_superseded_updates_stored_assertion():
     assert stored.status is CurationStatus.SUPERSEDED
     assert stored.superseded_at == at
 
+    # The id index must track the in-place status change, not serve a stale
+    # ACTIVE copy: hidden by default, surfaced with include_superseded.
+    assert store.get_assertion(assertion.assertion_id) is None
+    fetched = store.get_assertion(
+        assertion.assertion_id, options=GraphReadOptions(include_superseded=True)
+    )
+    assert fetched is not None
+    assert fetched.status is CurationStatus.SUPERSEDED
+    assert fetched.superseded_at == at
+
 
 class _NonTemporalMemoryGraphStore(MemoryGraphStore):
     """A MemoryGraphStore that declares NO temporal-query support.

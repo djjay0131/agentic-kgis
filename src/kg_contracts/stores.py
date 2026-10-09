@@ -66,6 +66,11 @@ class AdapterCapabilities(BaseModel):
     supports_bulk_upsert: bool = False
     supports_snapshot_reads: bool = False
     supports_graph_algorithms: bool = False
+    # The adapter can resolve one assertion by `assertion_id` (an id index)
+    # instead of scanning `assertions_for` over every subject — the read KGPS
+    # needs for `explain(assertion_id)` without an O(graph) walk. Consumers
+    # check this before preferring `GraphReader.get_assertion` over a scan.
+    supports_assertion_lookup: bool = False
 
 
 class GraphReadOptions(BaseModel):
@@ -147,6 +152,23 @@ class GraphReader(Protocol):
     def assertions_for(
         self, identity_id: str, options: GraphReadOptions = GraphReadOptions()
     ) -> list[Assertion]: ...
+
+    def get_assertion(
+        self, assertion_id: str, options: GraphReadOptions = GraphReadOptions()
+    ) -> Assertion | None:
+        """Resolve a single assertion by its `assertion_id` (issue #59).
+
+        The identity-keyed counterpart to `get_entity`: KGPS needs
+        `explain(assertion_id)` without walking every subject. Honours the
+        same visibility rules as `assertions_for` — `curation_epoch`,
+        `include_superseded`, `include_revoked`, the subject-revoke shield
+        (ADR-0026), and the temporal filters — so a hidden assertion returns
+        `None` exactly as it would be absent from `assertions_for`. An
+        adapter backing this with an index declares
+        `supports_assertion_lookup`; one that does not may raise
+        `UnsupportedCapabilityError`.
+        """
+        ...
 
     def neighborhood(
         self, identity_id: str, hops: int = 1, options: GraphReadOptions = GraphReadOptions()
