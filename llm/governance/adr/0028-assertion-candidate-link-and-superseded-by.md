@@ -3,6 +3,7 @@
 Status: Accepted
 Date: 2026-10-08
 Accepted: 2026-10-09 by the owner (Jason Cusati) on PR #63 — "Option A sounds good. Move forward with this change." The recommended semantics below (plural set-like `source_candidate_ids`; `superseded_by` as a partial invariant; `mark_superseded(..., replaced_by=None)`) are adopted as written.
+Implemented (KGIS half): PR #69
 Raised by: Issue #58 — the chain candidate → curation decision → canonical
 assertion cannot be joined from contracts alone; surfaced by the KGPS (PA-AKG)
 provenance audit, 2026-10-07 (agentic-kgps design spec §7 U3, tracking issue
