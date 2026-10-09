@@ -1,5 +1,40 @@
 # Active Context — agentic-kgis
 
+Update 2026-10-09 (review round): **PR #67 review findings on typed spans**
+(issue #56, ADR candidate 0011; no version change — the `2.1.0 -> 2.2.0` bump is
+already on the branch). Three findings, all addressed:
+
+1. **BLOCKER privacy — redaction leaked the quote.** `_redact_evidence_stmt`
+   nulled only `content`, so a verified per-item quote survived verbatim inside
+   `span.quote` in `evidence_json`. Redaction now clears `span.quote` alongside
+   `content` and keeps the span **offsets** (`start`/`end`), so the reader still
+   knows where the evidence pointed without retaining the text. A quote-only row
+   (its `content` already gone) is now redacted too, and the terminal-redaction
+   no-op from #65 keeps it cleared on re-extraction. Pinned end-to-end: extract
+   with a verified quote → `ErasureCoordinator.erase` → `content is None` **and**
+   `span.quote is None`, offsets unchanged; re-running extraction does not
+   restore it.
+2. **Repeated quotes collapsed to first occurrence.** `_pop_quote` used
+   `chunk_text.find`, anchoring every duplicate to the first occurrence, so two
+   items quoting "Paris" produced one evidence id. The parser now tracks a
+   per-parse set of used offsets and anchors each item to the **next unused
+   occurrence** (scanning from each match's `+1`, so overlapping occurrences are
+   distinct); only when every occurrence is claimed does it fall back to the
+   first. Tested at the parser level and at the extractor level (two identical
+   quotes → two distinct spans and evidence ids).
+3. **Documentation.** `parse.py` (module + `_pop_quote` + `OutputParser`
+   protocol), `provenance.quote_evidence_id`, `TextSpan`, and ADR candidate 0011
+   now record that quote matching is **exact** with no Unicode/whitespace
+   normalisation (fails closed as `quote_not_verified`), and that **overlapping
+   window chunks can give the same document span two ids** — de-duplicate on the
+   span, not the id.
+
+PR body also notes the `OutputParser.parse` keyword-only signature change for
+custom parsers and the `CONTRACT_VERSION` `2.2.0` interaction with
+agentic-kgcs#53 (the exact-match `ContractVersionRule` rejects in-flight 2.1.0
+candidates). 878 passed, ruff clean, `mypy --strict` clean (79 files), governance
+4/4.
+
 Update 2026-10-09: **typed character spans on evidence, and verified per-item
 quotes from extraction** (issue #56, ADR candidate 0011; `CONTRACT_VERSION`
 `2.1.0 -> 2.2.0`). Span provenance was chunk-level and string-encoded: the

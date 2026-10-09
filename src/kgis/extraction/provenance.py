@@ -108,6 +108,13 @@ def quote_evidence_id(
     quote re-collects the same evidence, while two different quotes in one chunk
     stay distinct. The offsets are part of the key, not the quote text, so the id
     is stable across a chunk whose wording changed only outside the span.
+
+    Consequence of keying on the chunk: **overlapping window chunks can give the
+    same document span two ids**. If a chunker's windows overlap, two chunks can
+    both contain one document character range, and the same quoted sentence is
+    then collected under two evidence ids. Both rows carry the same
+    `span.start`/`span.end` and quote, so de-duplicating on the typed span — not
+    the id — collapses them. Documented in ADR candidate 0011.
     """
     return "ev_" + stable_suffix(
         chunk.doc_id,

@@ -60,6 +60,21 @@ non-string or empty) is **dropped with a warning** — a paraphrase is never
 stored as a verbatim quote. Dropped-quote warnings surface on the
 `IngestionReport` as `code="quote_not_verified"`.
 
+The match is **exact on the raw strings**: there is no Unicode or whitespace
+normalisation — no NFC/NFKC folding, no collapsing or trimming of interior or
+boundary whitespace. A curly apostrophe versus a straight one, a non-breaking
+space versus a space, or a different run of spaces all fail closed and the
+quote is dropped as `quote_not_verified`. This is deliberate: a normalising
+matcher can silently widen the text a span claims to cover, and a dropped
+quote is honest where a mangled one is not.
+
+When two items quote the same text, each is anchored to the **next unused
+occurrence** within the chunk (a per-parse set of used offsets), so each gets
+its own document span and its own evidence id instead of collapsing onto the
+first occurrence. Only when every occurrence is already claimed does an item
+fall back to the first occurrence, so a repeated quote still verifies rather
+than being dropped.
+
 ### 4. Verified quotes produce a span-narrowed `Evidence`
 
 When an item carries a verified quote, extraction emits a second, span-narrowed
@@ -67,6 +82,18 @@ When an item carries a verified quote, extraction emits a second, span-narrowed
 offsets plus the extractor/model/prompt versions) and cites it from the
 candidate **in addition to** the chunk evidence. Both citations use
 `EvidenceRelationship.DERIVED_FROM`.
+
+Because the id folds in the chunk coordinates, **overlapping window chunks can
+give the same document span two ids**: a `FixedWindowChunker` with overlap (or
+any chunker whose windows overlap) may emit two chunks that both contain one
+document character range, so one quoted sentence is collected under two
+distinct evidence ids. This is not a correctness fault — both rows carry the
+same document `span.start`/`span.end` and the same quote, and de-duplication on
+the typed span (not the id) collapses them — but a consumer keying on
+`evidence_id` alone will see two rows where it might expect one. It is recorded
+here so the behaviour is a documented property, not a surprise; the alternative
+(keying only on the document offsets) would collide when two documents share
+offsets and would lose the chunk coordinate provenance.
 
 The candidate cites the narrowed evidence; the `LLMExtractor` returns it
 alongside the candidate (`ExtractionResult`/`ExtractedCandidate`) and the runner

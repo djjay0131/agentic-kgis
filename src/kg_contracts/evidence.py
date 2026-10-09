@@ -65,6 +65,13 @@ class TextSpan(BaseModel):
     fragment that legacy `Evidence.source_locator` strings embed. It is purely
     additive (ADR candidate 0011): every existing `Evidence` keeps its
     `source_locator` unchanged, and `span` defaults to `None`.
+
+    When `quote` is populated from extraction it is verified by **exact
+    substring match** with no Unicode or whitespace normalisation (ADR
+    candidate 0011); a span may therefore carry `quote=None` (offsets known,
+    text not retained or not verifiable). Offsets are document-wide, so two
+    overlapping window chunks can yield two evidences naming the same span —
+    de-duplicate on the span, not on the evidence id.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
