@@ -119,3 +119,54 @@ class TestQuote:
             '{"items": [{"x": 1, "quote": "yes"}]}', chunk_text=text
         )
         assert items[0].quote_start == 4  # deterministic, first occurrence
+
+    def test_repeated_quotes_anchor_to_successive_occurrences(self) -> None:
+        # Two (or more) items quoting the same text must not collapse onto the
+        # first occurrence: each gets its own span so each gets its own evidence
+        # id downstream.
+        text = "Paris to Paris to Paris"
+        items = JsonItemsParser().parse(
+            '{"items": [{"id": 1, "quote": "Paris"}, '
+            '{"id": 2, "quote": "Paris"}, {"id": 3, "quote": "Paris"}]}',
+            chunk_text=text,
+        )
+        assert [i.quote_start for i in items] == [0, 9, 18]
+        assert [i.quote_end for i in items] == [5, 14, 23]
+        assert all(i.quote == "Paris" for i in items)
+        assert all(i.warnings == () for i in items)
+
+    def test_repeated_quote_beyond_occurrences_falls_back_to_the_first(self) -> None:
+        # A quote that out-numbers its occurrences still verifies; it re-anchors
+        # to the first rather than being dropped.
+        text = "yes and yes"
+        items = JsonItemsParser().parse(
+            '{"items": [{"id": 1, "quote": "yes"}, {"id": 2, "quote": "yes"}, '
+            '{"id": 3, "quote": "yes"}]}',
+            chunk_text=text,
+        )
+        assert [i.quote_start for i in items] == [0, 8, 0]
+        assert all(i.quote == "yes" for i in items)
+
+    def test_used_offsets_do_not_leak_across_parse_calls(self) -> None:
+        # The used-offset set is per-parse, not per-parser: reusing one parser
+        # instance for a second chunk must anchor from that chunk's first
+        # occurrence again.
+        parser = JsonItemsParser()
+        first = parser.parse(
+            '{"items": [{"x": 1, "quote": "yes"}]}', chunk_text="yes yes"
+        )
+        second = parser.parse(
+            '{"items": [{"x": 2, "quote": "yes"}]}', chunk_text="yes yes"
+        )
+        assert first[0].quote_start == 0
+        assert second[0].quote_start == 0
+
+    def test_differing_whitespace_fails_closed(self) -> None:
+        # Exact matching: no whitespace normalisation, so a quote with different
+        # spacing is not verified.
+        items = JsonItemsParser().parse(
+            '{"items": [{"x": 1, "quote": "Ada  is"}]}',
+            chunk_text="Ada is a shortstop.",
+        )
+        assert items[0].quote is None
+        assert any("not an exact substring" in w for w in items[0].warnings)

@@ -17,6 +17,22 @@ dropped with a warning rather than stored as a paraphrase (ADR candidate 0011).
 Everything else in the object becomes the record `values` a `CandidateBuilder`
 consumes — so the same builders that serve structured sync serve extraction,
 with the LLM only supplying the rows.
+
+Quote verification is **exact**. There is no Unicode or whitespace
+normalisation (no NFC/NFKC folding, no collapse/trim of interior or boundary
+whitespace): a quote is stored only if `chunk_text.find(quote) >= 0` on the
+raw strings. Any difference — a curly apostrophe for a straight one, a
+non-breaking space for a space, a different number of spaces — fails closed as
+`quote_not_verified` and the quote is dropped. This is deliberate: a
+normalising matcher can silently widen a quote's meaning, and a dropped quote
+is honest where a mangled one is not.
+
+Two items that quote the same text are anchored to **successive occurrences**
+within the chunk (a per-parse set of used offsets), so each gets its own
+document span and its own evidence id instead of collapsing onto the first
+occurrence. Only when every occurrence is already claimed does an item fall
+back to the first, so a repeated quote still verifies rather than being
+dropped.
 """
 
 from __future__ import annotations
@@ -71,6 +87,14 @@ class OutputParser(Protocol):
     compute document offsets. They default to an empty chunk at offset 0, which
     is right for a caller that does not deal in quotes.
 
+    **Custom parser authors:** `chunk_text`/`chunk_start` were added to this
+    protocol in the same release as the typed-span work (ADR candidate 0011,
+    which also bumps `CONTRACT_VERSION` `2.1.0 -> 2.2.0`). They are keyword-only
+    and defaulted, so existing callers keep working, but a custom
+    `OutputParser` implementation must accept `chunk_text` and `chunk_start`
+    (even if it ignores them) or the runner's `parse(raw, chunk_text=...,
+    chunk_start=...)` call will raise `TypeError`.
+
     Raises `ExtractionParseError` on malformed output — never returns a
     partial or invented result.
     """
@@ -122,6 +146,7 @@ class JsonItemsParser:
             raise ExtractionParseError("'items' must be an array")
 
         items: list[ExtractedItem] = []
+        used_quote_offsets: set[int] = set()
         for position, entry in enumerate(raw_items):
             if not isinstance(entry, dict):
                 raise ExtractionParseError(
@@ -130,7 +155,11 @@ class JsonItemsParser:
             values = {str(key): value for key, value in entry.items()}
             confidence = self._pop_confidence(values, position)
             quote, quote_start, quote_end, warnings = self._pop_quote(
-                values, position, chunk_text=chunk_text, chunk_start=chunk_start
+                values,
+                position,
+                chunk_text=chunk_text,
+                chunk_start=chunk_start,
+                used_offsets=used_quote_offsets,
             )
             items.append(
                 ExtractedItem(
@@ -163,12 +192,24 @@ class JsonItemsParser:
         *,
         chunk_text: str,
         chunk_start: int,
+        used_offsets: set[int],
     ) -> tuple[str | None, int | None, int | None, tuple[str, ...]]:
         """Lift `quote` out of `values`, verifying it is an exact chunk substring.
 
         Returns `(quote, start, end, warnings)`. On any failure the quote is
         dropped (`None`) and a warning is returned instead — a paraphrase must
         never be recorded as a verbatim quote.
+
+        Matching is **exact** on the raw strings: no Unicode or whitespace
+        normalisation is applied, so any byte-level difference fails closed.
+
+        `used_offsets` is the set of chunk-local offsets already anchored in
+        **this** parse. A repeated quote is anchored to the next *unused*
+        occurrence, so two items quoting the same text get distinct document
+        spans (and therefore distinct evidence ids) rather than collapsing onto
+        the first occurrence. Only when every occurrence is already claimed does
+        the item fall back to the first, so a quote that out-numbers its
+        occurrences still verifies rather than being dropped.
         """
         if _QUOTE_KEY not in values:
             return None, None, None, ()
@@ -182,11 +223,29 @@ class JsonItemsParser:
             return None, None, None, (
                 f"item {position} quote is empty; quote dropped",
             )
-        local = chunk_text.find(raw_quote)
+        local = self._next_unused_offset(chunk_text, raw_quote, used_offsets)
         if local < 0:
             return None, None, None, (
                 f"item {position} quote is not an exact substring of the chunk "
                 f"text; quote dropped",
             )
+        used_offsets.add(local)
         start = chunk_start + local
         return raw_quote, start, start + len(raw_quote), ()
+
+    @staticmethod
+    def _next_unused_offset(chunk_text: str, quote: str, used_offsets: set[int]) -> int:
+        """The next occurrence of `quote` not in `used_offsets`, else the first.
+
+        Returns `-1` when `quote` is not an occurrence at all. Scans from each
+        match's `+1` so overlapping occurrences are distinct anchors.
+        """
+        search_from = 0
+        while True:
+            found = chunk_text.find(quote, search_from)
+            if found < 0:
+                break
+            if found not in used_offsets:
+                return found
+            search_from = found + 1
+        return chunk_text.find(quote)
