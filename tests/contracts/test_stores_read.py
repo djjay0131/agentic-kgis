@@ -116,7 +116,9 @@ class _FakeWriter:
     def put_assertion(self, assertion: Assertion) -> None:
         return None
 
-    def mark_superseded(self, assertion_id: str, at: datetime) -> None:
+    def mark_superseded(
+        self, assertion_id: str, at: datetime, replaced_by: str | None = None
+    ) -> None:
         return None
 
 

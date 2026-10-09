@@ -18,7 +18,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION: str = "2.2.0"
+CONTRACT_VERSION: str = "2.3.0"
 """Semver of the kg_contracts contract shape, stamped into every `CandidateEnvelope`.
 
 Bumped 2.0.0 -> 2.1.0 by ADR-0022/ADR-0023: new *optional* fields
@@ -28,7 +28,14 @@ produced candidates remain valid — a backward-compatible minor bump.
 
 Bumped 2.1.0 -> 2.2.0 by ADR candidate 0011: `Evidence.span` (a typed
 `TextSpan`) is a new *optional* field, and `TextSpan` is new — nothing already
-produced is invalidated, so this too is a backward-compatible minor bump."""
+produced is invalidated, so this too is a backward-compatible minor bump.
+
+Bumped 2.2.0 -> 2.3.0 by ADR-0028: `Assertion.source_candidate_ids` (default
+`()`) and `Assertion.superseded_by` (default `None`) are new *optional* fields
+outside the ADR-0021 record seed, so every serialized assertion from before the
+change validates unchanged — a backward-compatible minor bump. Consumers
+validating contract versions exactly should accept compatible minors
+(agentic-kgcs ADR-0024)."""
 
 
 class VersionedComponentKind(StrEnum):

@@ -1,5 +1,48 @@
 # Active Context — agentic-kgis
 
+Update 2026-10-09: **assertion lineage pointers (issue #58, ADR-0028 Accepted;
+`CONTRACT_VERSION` `2.2.0 -> 2.3.0`)**. The KGIS half of ADR-0028 lands here;
+the KGCS planner/evolution half is a separate task and issue #58 is `Refs`, not
+`Fixes`.
+
+`Assertion` gains two optional, read-only provenance fields, both
+deliberately **outside** the ADR-0021 record seed (so they never re-mint a
+record id, and every pre-change serialized assertion validates unchanged under
+`extra="forbid"`):
+
+- `source_candidate_ids: tuple[str, ...] = ()` names the candidate(s) a record
+  was planned from — the join to the candidate ledger and, on the structured
+  path, to the `candidate_id`-keyed evidence registry, with no scan. It is
+  set-like: order is the caller's first-seen order preserved verbatim,
+  duplicates are rejected, and `()` is the honest null for an evolved record.
+  No candidate-id format validation (not an id space `kg_contracts` owns).
+- `superseded_by: str | None = None` names the record that replaced this one.
+  It is a **partial** invariant, not a biconditional: when set, `status` must
+  be `SUPERSEDED`, `superseded_at` must be set, and the id must be a
+  well-formed assertion id. A `SUPERSEDED` record may still carry
+  `superseded_by = None` (an identity merge, or ADR-0021's non-injective re-id
+  backfill). ADR-0028 flagged that no `is_assertion_id` predicate existed; one
+  is added (`as_` + 26-char Crockford-base32 ULID) and exported.
+
+`GraphWriter.mark_superseded` is extended to
+`mark_superseded(assertion_id, at, replaced_by=None)`; `MemoryGraphStore`
+implements it, setting the pointer on the retired copy while keeping the
+`assertion_id` index from ADR-0029 in lockstep, and rejecting a malformed
+`replaced_by` itself (`model_copy`, the pre-existing retire pattern, does not
+re-run the model validator). `replaced_by=None` leaves any existing pointer
+as-is rather than silently clearing it.
+
+**Coverage.** `GraphMutationStoreContract` round-trips both pointers — defaults;
+`source_candidate_ids` through `get_assertion` and `assertions_for`; the
+successor pointer through `include_superseded` on both surfaces — which is the
+reachable half of ADR-0028's adapter-drift risk. `assertions.py`'s validator
+tests pin every allowed/forbidden state, duplicates, order, `is_assertion_id`,
+and an old serialized record validating without the fields. Because the memory
+store has no `RETRACT_ASSERTION` (still Plan 3), the *setting* path is pinned
+by whitebox tests on `mark_superseded` (pointer set, pointer retained,
+malformed-id rejection, id-index sync). 902 passed, ruff clean,
+`mypy --strict` clean (79 files), governance 4/4. PR #69, governance L2.
+
 Update 2026-10-09: **provenance read ports KGPS needs** (issue #59, ADR-0029
 Proposed; no version change — release is separate). The 2026-10-07 KGPS
 (PA-AKG) provenance audit needed two reads KGIS lacked.

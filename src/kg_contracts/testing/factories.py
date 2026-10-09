@@ -162,6 +162,8 @@ def make_assertion(
     derivation: Derivation | None = None,
     curation_epoch: int = 0,
     trace_id: str | None = None,
+    source_candidate_ids: tuple[str, ...] = (),
+    superseded_by: str | None = None,
 ) -> Assertion:
     """Build a valid `Assertion`; defaults to a fresh identity as subject."""
     return Assertion(
@@ -184,4 +186,6 @@ def make_assertion(
         derivation=derivation,
         curation_epoch=curation_epoch,
         trace_id=trace_id if trace_id is not None else new_trace_id(),
+        source_candidate_ids=source_candidate_ids,
+        superseded_by=superseded_by,
     )

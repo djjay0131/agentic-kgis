@@ -513,6 +513,94 @@ class GraphMutationStoreContract:
         store = _as_testable(self.make_store())
         assert store.get_assertion("assertion_does_not_exist") is None
 
+    def test_assertion_lineage_fields_default_to_honest_null(self) -> None:
+        # ADR-0028: both pointers default (`()` / `None`), so an ordinary
+        # attached assertion carries no lineage and no successor. An adapter
+        # that drops the fields entirely would pass this but fail the round
+        # trips below, which is the reachable half of the adapter-drift risk.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        assertion = make_assertion(subject_identity=entity.identity_id)
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(_create_identity_op(entity), _attach_assertion_op(assertion)),
+            ),
+            preconditions=(),
+        )
+        fetched = store.get_assertion(assertion.assertion_id)
+        assert fetched is not None
+        assert fetched.source_candidate_ids == ()
+        assert fetched.superseded_by is None
+
+    def test_source_candidate_ids_round_trip_through_reads(self) -> None:
+        # ADR-0028: the candidate pointer is read-only provenance metadata on
+        # the record; it must survive persistence through both the id-keyed and
+        # identity-keyed read surfaces, order preserved.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        assertion = make_assertion(
+            subject_identity=entity.identity_id,
+            source_candidate_ids=("cand_1", "cand_2"),
+        )
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(_create_identity_op(entity), _attach_assertion_op(assertion)),
+            ),
+            preconditions=(),
+        )
+        fetched = store.get_assertion(assertion.assertion_id)
+        assert fetched is not None
+        assert fetched.source_candidate_ids == ("cand_1", "cand_2")
+        [listed] = store.assertions_for(entity.identity_id)
+        assert listed.source_candidate_ids == ("cand_1", "cand_2")
+
+    def test_superseded_by_round_trips_through_include_superseded_reads(self) -> None:
+        # ADR-0028: the successor pointer rides the retired copy. It is hidden
+        # by default and carries BOTH pointers on the history read, through
+        # both read surfaces — the round trip the adapter-drift risk names.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        successor = make_assertion(
+            subject_identity=entity.identity_id, predicate="height_cm", object_value=200
+        )
+        retired = make_assertion(
+            subject_identity=entity.identity_id,
+            predicate="height_cm",
+            object_value=195,
+            status=CurationStatus.SUPERSEDED,
+            superseded_at=NOW,
+            superseded_by=successor.assertion_id,
+            source_candidate_ids=("cand_old",),
+        )
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(
+                    _create_identity_op(entity),
+                    _attach_assertion_op(successor),
+                    _attach_assertion_op(retired),
+                ),
+            ),
+            preconditions=(),
+        )
+        assert store.get_assertion(retired.assertion_id) is None
+        fetched = store.get_assertion(
+            retired.assertion_id, options=GraphReadOptions(include_superseded=True)
+        )
+        assert fetched is not None
+        assert fetched.superseded_by == successor.assertion_id
+        assert fetched.source_candidate_ids == ("cand_old",)
+        listed = {
+            a.assertion_id: a
+            for a in store.assertions_for(
+                entity.identity_id, options=GraphReadOptions(include_superseded=True)
+            )
+        }
+        assert listed[retired.assertion_id].superseded_by == successor.assertion_id
+        assert listed[retired.assertion_id].source_candidate_ids == ("cand_old",)
+
     def test_revoke_identity_hides_entity_and_preserves_creation_epoch(self) -> None:
         # ADR-0025, the rollback contract an adapter must honour for a
         # committed curation run to be reversible: REVOKE_IDENTITY removes the

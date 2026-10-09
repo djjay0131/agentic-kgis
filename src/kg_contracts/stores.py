@@ -264,7 +264,9 @@ class GraphWriter(Protocol):
 
     def put_assertion(self, assertion: Assertion) -> None: ...
 
-    def mark_superseded(self, assertion_id: str, at: datetime) -> None: ...
+    def mark_superseded(
+        self, assertion_id: str, at: datetime, replaced_by: str | None = None
+    ) -> None: ...
 
 
 @runtime_checkable

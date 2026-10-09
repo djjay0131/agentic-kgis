@@ -151,6 +151,79 @@ def test_memory_graph_store_mark_superseded_updates_stored_assertion():
     assert fetched.superseded_at == at
 
 
+def test_memory_graph_store_mark_superseded_sets_successor_pointer():
+    # ADR-0028: `mark_superseded` carries the successor pointer through the
+    # same atomic retire primitive; the id index must serve the pointed copy.
+    store = MemoryGraphStore()
+    entity = make_entity()
+    _create_identity(store, entity)
+    retired = make_assertion(subject_identity=entity.identity_id)
+    successor = make_assertion(subject_identity=entity.identity_id, object_value=195)
+    _attach(store, retired, "pl_retired")
+    _attach(store, successor, "pl_successor")
+
+    at = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    store.mark_superseded(retired.assertion_id, at, replaced_by=successor.assertion_id)
+
+    surfaced = {
+        a.assertion_id: a
+        for a in store.assertions_for(
+            entity.identity_id, options=GraphReadOptions(include_superseded=True)
+        )
+    }
+    stored = surfaced[retired.assertion_id]
+    assert stored.status is CurationStatus.SUPERSEDED
+    assert stored.superseded_at == at
+    assert stored.superseded_by == successor.assertion_id
+
+    assert store.get_assertion(retired.assertion_id) is None
+    fetched = store.get_assertion(
+        retired.assertion_id, options=GraphReadOptions(include_superseded=True)
+    )
+    assert fetched is not None
+    assert fetched.superseded_by == successor.assertion_id
+
+
+def test_memory_graph_store_mark_superseded_without_pointer_keeps_existing_one():
+    # `replaced_by=None` is the honest null, but it must not silently clear a
+    # pointer a record already carries.
+    store = MemoryGraphStore()
+    entity = make_entity()
+    _create_identity(store, entity)
+    successor = make_assertion(subject_identity=entity.identity_id, object_value=195)
+    _attach(store, successor, "pl_successor")
+    retired = make_assertion(
+        subject_identity=entity.identity_id,
+        status=CurationStatus.SUPERSEDED,
+        superseded_at=NOW,
+        superseded_by=successor.assertion_id,
+    )
+    _attach(store, retired, "pl_retired")
+
+    store.mark_superseded(retired.assertion_id, datetime(2026, 7, 13, tzinfo=UTC))
+
+    fetched = store.get_assertion(
+        retired.assertion_id, options=GraphReadOptions(include_superseded=True)
+    )
+    assert fetched is not None
+    assert fetched.superseded_by == successor.assertion_id
+
+
+def test_memory_graph_store_mark_superseded_rejects_malformed_pointer():
+    # `model_copy` does not re-run the model validator, so the primitive guards
+    # the one externally supplied value itself.
+    store = MemoryGraphStore()
+    entity = make_entity()
+    _create_identity(store, entity)
+    assertion = make_assertion(subject_identity=entity.identity_id)
+    _attach(store, assertion, "pl_1")
+
+    with pytest.raises(ValueError, match="replaced_by"):
+        store.mark_superseded(assertion.assertion_id, NOW, replaced_by="not-an-assertion-id")
+    # The store is untouched: the record is still live.
+    assert store.get_assertion(assertion.assertion_id) is not None
+
+
 def _create_identity(store: MemoryGraphStore, entity: CanonicalEntity) -> None:
     store.apply(
         GraphMutationBatch(

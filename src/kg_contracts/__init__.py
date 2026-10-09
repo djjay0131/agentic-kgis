@@ -22,6 +22,7 @@ from kg_contracts.assertions import (
     ConflictRecord,
     ConflictStatus,
     CurationStatus,
+    is_assertion_id,
 )
 from kg_contracts.candidates import (
     CANDIDATE_KINDS,
@@ -172,6 +173,7 @@ __all__ = [
     "ConflictRecord",
     "ConflictStatus",
     "CurationStatus",
+    "is_assertion_id",
     # policy (T12)
     "AdjudicationRoute",
     "ConfidencePolicy",
