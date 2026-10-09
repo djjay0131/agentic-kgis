@@ -10,6 +10,7 @@ from kg_contracts.evidence import (
     EvidenceRef,
     EvidenceRelationship,
     Provenance,
+    TextSpan,
     ValidPeriod,
 )
 
@@ -144,3 +145,46 @@ def test_constructor_helpers_and_deterministic_ids():
                         observed_at=NOW, reason=AbsenceReason.SOURCE_OMITTED,
                         provenance=PROV)
     assert a.availability is EvidenceAvailability.ABSENT
+
+
+class TestTextSpan:
+    DOC = "The quick brown fox jumps"
+
+    def test_slice_matches_quote(self):
+        span = TextSpan(start=4, end=9, quote=self.DOC[4:9])
+        assert self.DOC[span.start:span.end] == span.quote == "quick"
+
+    def test_start_after_end_is_rejected(self):
+        with pytest.raises(ValidationError, match="start must be <= end"):
+            TextSpan(start=9, end=4)
+
+    def test_equal_start_and_end_is_an_empty_span(self):
+        span = TextSpan(start=3, end=3)
+        assert span.quote is None
+
+    def test_negative_offset_is_rejected(self):
+        with pytest.raises(ValidationError):
+            TextSpan(start=-1, end=2)
+
+    def test_quote_is_optional(self):
+        assert TextSpan(start=0, end=4).quote is None
+
+    def test_evidence_span_defaults_none(self):
+        assert _evidence().span is None
+
+    def test_evidence_span_round_trips_through_json(self):
+        span = TextSpan(start=4, end=9, quote="quick")
+        e = _evidence(span=span)
+        assert e.span == span
+        restored = Evidence.model_validate_json(e.model_dump_json())
+        assert restored.span == span
+
+    def test_present_helper_accepts_span(self):
+        from kg_contracts.evidence import present_evidence
+
+        span = TextSpan(start=0, end=3, quote="abc")
+        e = present_evidence(
+            source_type="document", source_locator="doc#0-3",
+            observed_at=NOW, content="abc", provenance=PROV, span=span,
+        )
+        assert e.span == span

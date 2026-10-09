@@ -66,6 +66,7 @@ from kg_contracts.evidence import (
     EvidenceRef,
     EvidenceRelationship,
     Provenance,
+    TextSpan,
     ValidPeriod,
 )
 from kg_contracts.identity import (
@@ -129,6 +130,7 @@ __all__ = [
     "EvidenceRef",
     "EvidenceRelationship",
     "Provenance",
+    "TextSpan",
     "ValidPeriod",
     # identity (T5)
     "EntityRef",
