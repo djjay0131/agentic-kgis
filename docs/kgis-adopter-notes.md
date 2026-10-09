@@ -226,6 +226,11 @@ Still no tags and no PyPI release (issue #38), so a SHA remains the only exact
 pin. The version is `0.3.0`; `agentic-kgis>=0.3.0` is the constraint that means
 "has a reachable `AUTO` route and a reversible `CREATE_IDENTITY`".
 
+**Update (0.5.0):** the first tag, `v0.5.0`, now exists, so pin with
+`agentic-kgis @ git+https://github.com/djjay0131/agentic-kgis.git@v0.5.0`.
+There is still no PyPI release (issue #38). See `CHANGELOG.md` for what 0.5.0
+contains; note that `CONTRACT_VERSION` is now 2.2.0.
+
 ## Erasure must reach the evidence registry (issue #61)
 
 `SqliteCandidateLedger.erase()` governs the ledger row only. The passage text a
