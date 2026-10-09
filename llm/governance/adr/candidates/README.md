@@ -1,7 +1,11 @@
 # ADR candidates
 
-Open candidate: [0010 erasure-cascade-coordinator](0010-erasure-cascade-coordinator.md)
-(issue #61, 2026-10-08) — awaiting owner review/promotion.
+Open candidates awaiting owner review/promotion:
+
+- [0010 erasure-cascade-coordinator](0010-erasure-cascade-coordinator.md)
+  (issue #61, 2026-10-08)
+- [0011 typed-text-spans-on-evidence](0011-typed-text-spans-on-evidence.md)
+  (issue #56, 2026-10-09)
 
 As of **2026-08-22**, every ADR candidate that was in this directory had been
 reviewed by the architecture owner and **promoted to a numbered, accepted ADR**

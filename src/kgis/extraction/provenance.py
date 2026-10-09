@@ -30,6 +30,7 @@ from kg_contracts.evidence import (
     EvidenceRef,
     EvidenceRelationship,
     Provenance,
+    TextSpan,
     present_evidence,
 )
 from kgis.extraction.config import ExtractorConfig
@@ -85,6 +86,7 @@ def build_chunk_evidence(
         provenance=provenance,
         content=chunk.text[:_MAX_INLINE_CHARS],
         payload_hash=chunk.content_hash,
+        span=TextSpan(start=chunk.start, end=chunk.end),
     )
 
 
@@ -92,6 +94,81 @@ def chunk_evidence_ref(chunk: Chunk, config: ExtractorConfig) -> EvidenceRef:
     """A `DERIVED_FROM` citation of the passage a candidate was extracted from."""
     return EvidenceRef(
         evidence_id=chunk_evidence_id(chunk, config),
+        relationship=EvidenceRelationship.DERIVED_FROM,
+    )
+
+
+def quote_evidence_id(
+    chunk: Chunk, config: ExtractorConfig, *, start: int, end: int
+) -> str:
+    """Deterministic evidence id for a *verified per-item quote* span.
+
+    Keyed on the chunk coordinates **and** the span's document offsets (plus the
+    extractor's identity and model/prompt versions), so re-extracting the same
+    quote re-collects the same evidence, while two different quotes in one chunk
+    stay distinct. The offsets are part of the key, not the quote text, so the id
+    is stable across a chunk whose wording changed only outside the span.
+
+    Consequence of keying on the chunk: **overlapping window chunks can give the
+    same document span two ids**. If a chunker's windows overlap, two chunks can
+    both contain one document character range, and the same quoted sentence is
+    then collected under two evidence ids. Both rows carry the same
+    `span.start`/`span.end` and quote, so de-duplicating on the typed span — not
+    the id — collapses them. Documented in ADR candidate 0011.
+    """
+    return "ev_" + stable_suffix(
+        chunk.doc_id,
+        chunk.fragment,
+        str(start),
+        str(end),
+        config.extractor_id,
+        config.model_id,
+        config.model_version,
+        config.prompt_version,
+    )
+
+
+def build_quote_evidence(
+    chunk: Chunk, config: ExtractorConfig, *, span: TextSpan, observed_at: datetime
+) -> Evidence:
+    """PRESENT evidence narrowed to a per-item quote the parser verified.
+
+    The span is into the *source document* (`span.start`/`span.end` are document
+    offsets, `span.quote` the exact text). `provenance` carries the same
+    model/prompt versions as the chunk evidence, so the narrowed citation is
+    audit-grade too. `content` is the quote (capped like the chunk evidence).
+    """
+    provenance = Provenance(
+        source=chunk.locator,
+        source_ref=chunk.fragment,
+        actor=config.extractor_id,
+        model=config.model_id,
+        model_version=config.model_version,
+        prompt_version=config.prompt_version,
+    )
+    return present_evidence(
+        evidence_id=quote_evidence_id(
+            chunk, config, start=span.start, end=span.end
+        ),
+        source_type=chunk.source_type,
+        source_locator=f"{chunk.locator}#{chunk.fragment}",
+        observed_at=observed_at,
+        provenance=provenance,
+        content=(span.quote or "")[:_MAX_INLINE_CHARS],
+        span=span,
+    )
+
+
+def quote_evidence_ref(
+    chunk: Chunk, config: ExtractorConfig, *, span: TextSpan
+) -> EvidenceRef:
+    """A `DERIVED_FROM` citation of a verified per-item quote span.
+
+    `DERIVED_FROM` (not `SUPPORTS`) matches the chunk citation: KGIS records
+    *where a claim came from*; whether the quote actually verifies the claim is
+    KGCS/KGPS's judgement (ADR candidate 0011)."""
+    return EvidenceRef(
+        evidence_id=quote_evidence_id(chunk, config, start=span.start, end=span.end),
         relationship=EvidenceRelationship.DERIVED_FROM,
     )
 

@@ -37,9 +37,10 @@ def test_envelope_defaults():
 
 
 def test_contract_version_is_the_additive_minor_bump():
-    # ADR-0022/ADR-0023 add optional fields only; the version policy makes
-    # that a backward-compatible minor bump.
-    assert CONTRACT_VERSION == "2.1.0"
+    # ADR-0022/ADR-0023 add optional fields only; ADR candidate 0011 adds the
+    # optional `Evidence.span` (and the new `TextSpan`). The version policy
+    # makes each a backward-compatible minor bump.
+    assert CONTRACT_VERSION == "2.2.0"
 
 
 def test_source_version_is_optional_and_defaults_none():

@@ -7,9 +7,11 @@ survive a ledger-only erase. The 2026-10-07 KGPS provenance audit recorded this 
 upstream prerequisite U8. `ErasureCoordinator` closes the gap:
 
 - remove the erased candidate's evidence refs;
-- redact every evidence item those refs orphaned — `content=None`, `payload_hash`
+- redact every evidence item those refs orphaned — `content=None`,
+  `span.quote=None` (the typed span's **offsets are kept**, so ADR candidate
+  0011's per-item quote text cannot survive inside `evidence_json`), `payload_hash`
   retained, availability still `PRESENT`, plus a `redacted_at` / `redaction_reason`
-  marker — so it stays provable by hash and no inline passage survives;
+  marker — so it stays provable by hash and no inline passage text survives;
 - record each redaction in the ledger's append-only `audit_records` stream
   (`kind='redact'`), keyed to the erased candidate.
 

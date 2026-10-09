@@ -8,6 +8,7 @@ client (or a scripted fake standing in for a live model).
 from __future__ import annotations
 
 from kgis.builders import EntityCandidateBuilder, SourceScoring
+from kgis.erasure import ErasureCoordinator
 from kgis.evidence.store import SqliteEvidenceRegistry
 from kgis.extraction.client import RecordingCompletionClient, ReplayCompletionClient
 from kgis.extraction.config import ExtractorConfig
@@ -18,10 +19,12 @@ from kgis.extraction.documents import (
     ParagraphChunker,
 )
 from kgis.extraction.runner import ExtractionPipeline
+from kgis.ledger.config import BASEBALL_AI_PROFILE
 from kgis.ledger.store import SqliteCandidateLedger
 
 from .support import (
     ConcurrencyProbeModel,
+    SAMPLE_DOC,
     ScriptedModel,
     broken_config,
     fixed_clock,
@@ -314,3 +317,125 @@ def _plays_for_builder() -> object:
 def test_entity_candidate_builder_import_is_used() -> None:
     # Guard: the player/skill configs use EntityCandidateBuilder.
     assert isinstance(player_config().builder, EntityCandidateBuilder)
+
+
+def _quoted_client(quote: str) -> ScriptedModel:
+    response = (
+        '{"items": [{"player_id": "ada", "name": "Ada", '
+        f'"quote": "{quote}"' + "}]}"
+    )
+    return ScriptedModel({("Player", "Ada"): response})
+
+
+def test_verified_quote_writes_span_evidence_and_cites_it() -> None:
+    ledger = SqliteCandidateLedger(":memory:")
+    registry = SqliteEvidenceRegistry(":memory:")
+    report = _pipeline(
+        client=_quoted_client("Ada is a shortstop"),
+        sink=ledger,
+        registry=registry,
+        extractors=[player_config()],
+    ).run()
+
+    entry = next(
+        e
+        for e in ledger.ledger_entries()
+        if e.candidate.semantic_key == "player/baseball/ada"
+    )
+    # Chunk evidence + narrowed quote evidence.
+    assert len(entry.candidate.evidence_refs) == 2
+    resolved = registry.resolve(entry.candidate.candidate_id)
+    assert len(resolved) == 2
+
+    quote_evidence = next(
+        e for e in resolved if e.span is not None and e.span.quote == "Ada is a shortstop"
+    )
+    assert SAMPLE_DOC.text[quote_evidence.span.start:quote_evidence.span.end] == "Ada is a shortstop"
+    # Every evidence span resolves to its text.
+    for evidence in resolved:
+        assert evidence.span is not None
+        assert SAMPLE_DOC.text[evidence.span.start:evidence.span.end]
+    assert not any(w.code == "quote_not_verified" for w in report.warnings)
+
+
+def test_rejected_quote_is_dropped_and_reported_as_a_warning() -> None:
+    ledger = SqliteCandidateLedger(":memory:")
+    registry = SqliteEvidenceRegistry(":memory:")
+    report = _pipeline(
+        client=_quoted_client("Ada is a pitcher"),  # not in the chunk
+        sink=ledger,
+        registry=registry,
+        extractors=[player_config()],
+    ).run()
+
+    entry = next(
+        e
+        for e in ledger.ledger_entries()
+        if e.candidate.semantic_key == "player/baseball/ada"
+    )
+    # Only the chunk evidence remains; the paraphrase was not stored.
+    assert len(entry.candidate.evidence_refs) == 1
+    resolved = registry.resolve(entry.candidate.candidate_id)
+    assert len(resolved) == 1
+    assert all(e.span is None or e.span.quote != "Ada is a pitcher" for e in resolved)
+    warnings = [w for w in report.warnings if w.code == "quote_not_verified"]
+    assert len(warnings) == 1
+    assert "not an exact substring" in warnings[0].message
+    # The warning is not fatal: the candidate was still built and submitted.
+    assert report.candidates_submitted == 1
+    assert not report.incomplete
+
+
+def test_erasure_clears_quote_text_but_keeps_span_offsets() -> None:
+    """Redaction must remove verbatim quote text from `span.quote`, not only
+    `content`, and re-extraction must not restore it (issue #67 review finding 1).
+    """
+    ledger = SqliteCandidateLedger(":memory:", profile=BASEBALL_AI_PROFILE)
+    registry = SqliteEvidenceRegistry(":memory:")
+    pipeline = _pipeline(
+        client=_quoted_client("Ada is a shortstop"),
+        sink=ledger,
+        registry=registry,
+        extractors=[player_config()],
+    )
+    pipeline.run()
+
+    entry = next(
+        e
+        for e in ledger.ledger_entries()
+        if e.candidate.semantic_key == "player/baseball/ada"
+    )
+    candidate_id = entry.candidate.candidate_id
+    resolved = registry.resolve(candidate_id)
+    quote_evidence = next(
+        e for e in resolved if e.span is not None and e.span.quote == "Ada is a shortstop"
+    )
+    quote_id = quote_evidence.evidence_id
+    chunk_evidence_id = next(
+        e.evidence_id for e in resolved if e.evidence_id != quote_id
+    )
+    span_offsets = (quote_evidence.span.start, quote_evidence.span.end)
+
+    ErasureCoordinator(ledger, registry).erase(
+        candidate_id, reason="gdpr", actor="dpo"
+    )
+
+    stored_quote = registry.get(quote_id)
+    assert stored_quote is not None
+    assert stored_quote.content is None                      # passage text gone
+    assert stored_quote.span is not None
+    assert stored_quote.span.quote is None                   # verbatim quote gone
+    assert (stored_quote.span.start, stored_quote.span.end) == span_offsets  # offsets kept
+    assert registry.get(chunk_evidence_id).content is None
+    marker_before = registry.redaction(quote_id)
+    assert marker_before is not None and marker_before[0] is not None
+
+    # Re-extraction re-collects the same deterministic evidence id; redaction is
+    # terminal, so the cleared quote text is never restored.
+    pipeline.run()
+
+    after = registry.get(quote_id)
+    assert after is not None
+    assert after.content is None
+    assert after.span is not None and after.span.quote is None
+    assert registry.redaction(quote_id) == marker_before

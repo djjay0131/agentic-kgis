@@ -38,7 +38,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from kg_contracts.candidates import Candidate
-from kg_contracts.evidence import EvidenceRef, EvidenceRelationship
+from kg_contracts.evidence import Evidence, EvidenceRef, EvidenceRelationship
 from kg_contracts.ingestion import CompletionClient
 from kg_contracts.stores import CandidateSink, LedgerReader, SubmissionStatus
 from kgis.builders import BuildContext, SourceScoring
@@ -47,7 +47,7 @@ from kgis.evidence.store import SqliteEvidenceRegistry
 from kgis.extraction.client import is_deterministic
 from kgis.extraction.config import ExtractorConfig
 from kgis.extraction.documents import Chunk, Chunker, Document, DocumentSource
-from kgis.extraction.extractor import LLMExtractor
+from kgis.extraction.extractor import ExtractionResult, LLMExtractor
 from kgis.extraction.provenance import (
     build_chunk_evidence,
     build_document_artifact,
@@ -76,10 +76,10 @@ class _WorkItem:
 
 @dataclass(frozen=True)
 class _WorkOutcome:
-    """The result of one work item — candidates on success, a message on failure."""
+    """The result of one work item — candidates + evidence on success, a message on failure."""
 
     item: _WorkItem
-    candidates: tuple[Candidate, ...]
+    result: ExtractionResult
     error: str | None
 
 
@@ -234,13 +234,14 @@ class ExtractionPipeline:
                         )
             if outcome.error is not None:
                 continue
-            for candidate in outcome.candidates:
+            for extracted in outcome.result.candidates:
                 report.candidates_built += 1
-                cited = self._cite_chunk(candidate, outcome.item)
+                cited = self._cite_chunk(extracted.candidate, outcome.item)
                 if not self._admit(cited, report, seen_keys):
                     continue
                 if submit:
                     self._write_chunk_evidence(outcome.item, cited.candidate_id)
+                    self._write_span_evidence(extracted.evidence, cited.candidate_id)
                 planned.append(cited)
 
         return planned
@@ -283,6 +284,12 @@ class ExtractionPipeline:
         for outcome in outcomes:
             if outcome.error is not None:
                 report.fail(outcome.error)
+            for warning in outcome.result.warnings:
+                report.warn(
+                    "quote_not_verified",
+                    warning,
+                    locator=outcome.item.chunk.fragment,
+                )
         return outcomes
 
     def _run_one(self, item: _WorkItem) -> _WorkOutcome:
@@ -294,14 +301,14 @@ class ExtractionPipeline:
         is included so a genuine bug is still visible in the failures list.
         """
         try:
-            candidates = item.extractor.extract(item.chunk, item.context)
-            return _WorkOutcome(item=item, candidates=tuple(candidates), error=None)
+            result = item.extractor.extract_result(item.chunk, item.context)
+            return _WorkOutcome(item=item, result=result, error=None)
         except Exception as exc:  # noqa: BLE001 - failure isolation is the contract here
             message = (
                 f"extractor={item.extractor.name} doc={item.document.doc_id} "
                 f"chunk={item.chunk.fragment}: {type(exc).__name__}: {exc}"
             )
-            return _WorkOutcome(item=item, candidates=(), error=message)
+            return _WorkOutcome(item=item, result=ExtractionResult(), error=message)
 
     def _admit(
         self, candidate: Candidate, report: IngestionReport, seen_keys: set[str]
@@ -340,6 +347,28 @@ class ExtractionPipeline:
         )
         self._registry.put(evidence)
         self._registry.add_refs(subject_id, [chunk_evidence_ref(item.chunk, item.extractor.config)])
+
+    def _write_span_evidence(self, evidence: Sequence[Evidence], subject_id: str) -> None:
+        """Persist a candidate's span-narrowed per-item evidence and refs it.
+
+        The candidate already cites this evidence (the extractor attached the
+        ref); this writes the rows and registers the citations so
+        `registry.resolve(candidate_id)` returns them. No-op when the item
+        carried no verified quote.
+        """
+        if not evidence:
+            return
+        self._registry.put_many(evidence)
+        self._registry.add_refs(
+            subject_id,
+            [
+                EvidenceRef(
+                    evidence_id=ev.evidence_id,
+                    relationship=EvidenceRelationship.DERIVED_FROM,
+                )
+                for ev in evidence
+            ],
+        )
 
     def _write_document_evidence(self, document: Document, subject_id: str) -> None:
         evidence = build_document_evidence(document, observed_at=self._clock.now())

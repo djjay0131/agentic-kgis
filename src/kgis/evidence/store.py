@@ -229,11 +229,19 @@ class SqliteEvidenceRegistry:
     def _redact_evidence_stmt(
         self, evidence_id: str, *, reason: str | None, redacted_at: str
     ) -> str | None:
-        """Drop inline content from one evidence row, keeping it PRESENT-by-hash.
+        """Drop inline passage text from one evidence row, keeping it PRESENT-by-hash.
 
-        Returns the retained `payload_hash` when content was actually removed, or
-        `None` when the row is absent, not PRESENT, or already content-free.
+        Returns the retained `payload_hash` when text was actually removed, or
+        `None` when the row is absent, not PRESENT, or already text-free.
         ABSENT/ERROR evidence carries no content to redact.
+
+        Per-item quotes are inline passage text too (ADR candidate 0011): a
+        verified quote lives in **both** `content` and `span.quote`, so
+        redaction clears `span.quote` alongside `content`. The span **offsets**
+        (`start`/`end`) are deliberately kept — the reader still knows where in
+        the document the evidence pointed without retaining the text, and the
+        typed span keeps resolving. A quote-only row (its `content` already
+        gone) is still redacted, so an erased quote cannot survive on `span`.
         """
         row = self._conn.execute(
             "SELECT evidence_json, payload_hash FROM evidence WHERE evidence_id = ?",
@@ -242,15 +250,17 @@ class SqliteEvidenceRegistry:
         if row is None:
             return None
         evidence = Evidence.model_validate_json(row["evidence_json"])
-        if (
-            evidence.availability is not EvidenceAvailability.PRESENT
-            or evidence.content is None
-        ):
+        if evidence.availability is not EvidenceAvailability.PRESENT:
             return None
-        payload_hash = evidence.payload_hash or _content_digest(evidence.content)
-        redacted = evidence.model_copy(
-            update={"content": None, "payload_hash": payload_hash}
-        )
+        span_quote = evidence.span.quote if evidence.span is not None else None
+        inline = evidence.content if evidence.content is not None else span_quote
+        if inline is None:
+            return None
+        payload_hash = evidence.payload_hash or _content_digest(inline)
+        updates: dict[str, object] = {"content": None, "payload_hash": payload_hash}
+        if span_quote is not None and evidence.span is not None:
+            updates["span"] = evidence.span.model_copy(update={"quote": None})
+        redacted = evidence.model_copy(update=updates)
         self._conn.execute(
             "UPDATE evidence SET evidence_json = ?, payload_hash = ?, redacted_at = ?, "
             "redaction_reason = ? WHERE evidence_id = ?",

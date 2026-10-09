@@ -119,10 +119,16 @@ class EvidenceValidity(BaseModel):
 
     resolvable_rate: MetricValue
     span_coverage_rate: MetricValue
+    span_overlap_rate: MetricValue
+    """Share of matched gold items with character offsets whose cited evidence
+    carries a typed `Evidence.span` overlapping the gold `[start, end)` — the
+    typed replacement for parsing offsets out of a locator string."""
     total_refs: int
     resolvable_refs: int
     spans_checked: int
     spans_covered: int
+    spans_with_offsets: int
+    spans_overlapping: int
 
 
 class ExtractionMetrics(BaseModel):
@@ -205,8 +211,37 @@ def _covers_span(
     return False
 
 
+def _overlaps_span(
+    candidate: Candidate,
+    span: EvidenceSpan,
+    store: Mapping[str, Evidence],
+) -> bool:
+    """Does any of the candidate's cited evidence carry a span overlapping `span`?
+
+    Both sides are half-open document-offset intervals: overlap means
+    `ev.start < gold.end and gold.start < ev.end`. The cited evidence must be
+    PRESENT, at the same `source_locator`, and carry a typed `Evidence.span`
+    (`None` spans cannot be compared and do not count). Requires the gold span
+    to have both `start` and `end`.
+    """
+    if span.start is None or span.end is None:
+        return False
+    for ref in candidate.evidence_refs:
+        evidence = store.get(ref.evidence_id)
+        if evidence is None or evidence.availability is not EvidenceAvailability.PRESENT:
+            continue
+        evidence_span = evidence.span
+        if evidence_span is None:
+            continue
+        if evidence.source_locator != span.source_locator:
+            continue
+        if evidence_span.start < span.end and span.start < evidence_span.end:
+            return True
+    return False
+
+
 def _evidence_validity(output: ArmOutput, gold: GoldSet) -> EvidenceValidity:
-    """Resolvability of every cited ref, and span coverage over matched items."""
+    """Resolvability of every cited ref, and span coverage/overlap over matches."""
     store = output.evidence
 
     total_refs = 0
@@ -228,62 +263,58 @@ def _evidence_validity(output: ArmOutput, gold: GoldSet) -> EvidenceValidity:
     else:
         coverage = MetricValue.measured(spans_covered / spans_checked)
 
+    overlap_checked, overlap_covered = _span_overlap_counts(output, gold)
+    if overlap_checked == 0:
+        overlap = MetricValue.insufficient(
+            "no matched gold items carry character offsets"
+        )
+    else:
+        overlap = MetricValue.measured(overlap_covered / overlap_checked)
+
     return EvidenceValidity(
         resolvable_rate=resolvable,
         span_coverage_rate=coverage,
+        span_overlap_rate=overlap,
         total_refs=total_refs,
         resolvable_refs=resolvable_refs,
         spans_checked=spans_checked,
         spans_covered=spans_covered,
+        spans_with_offsets=overlap_checked,
+        spans_overlapping=overlap_covered,
     )
 
 
-def _span_coverage_counts(output: ArmOutput, gold: GoldSet) -> tuple[int, int]:
-    """Over each category, count matched gold items with a span and how many are covered."""
-    store = output.evidence
-    checked = 0
-    covered = 0
-
-    entity_cands = [c for c in output.candidates if isinstance(c, EntityCandidate)]
-    ent_match = match_entities(output.candidates, gold)
-    checked_e, covered_e = _category_span_counts(
-        entity_cands, list(gold.entities), ent_match, store
-    )
-    checked += checked_e
-    covered += covered_e
-
-    relation_cands = [c for c in output.candidates if isinstance(c, RelationCandidate)]
-    rel_match = match_relations(output.candidates, gold)
-    checked_r, covered_r = _category_span_counts(
-        relation_cands, list(gold.relations), rel_match, store
-    )
-    checked += checked_r
-    covered += covered_r
-
-    attr_cands = [c for c in output.candidates if isinstance(c, AttributeAssertionCandidate)]
-    attr_match = match_attributes(output.candidates, gold)
-    checked_a, covered_a = _category_span_counts(
-        attr_cands, list(gold.attributes), attr_match, store
-    )
-    checked += checked_a
-    covered += covered_a
-
-    return checked, covered
-
-
-def _category_span_counts(
-    candidates: Sequence[Candidate],
-    gold_items: Sequence[object],
-    match: CategoryMatch,
-    store: Mapping[str, Evidence],
-) -> tuple[int, int]:
-    """For one category, count (matched gold items with a span, of which covered).
+def _matched_gold_spans(
+    output: ArmOutput, gold: GoldSet
+) -> list[tuple[Candidate, EvidenceSpan]]:
+    """Every (matched candidate, gold span) pair across the three categories.
 
     Iterates candidates in the same order the match keys were built, so
     `match.matched_gold_indices[j]` names the gold item candidate j hit.
     """
-    checked = 0
-    covered = 0
+    pairs: list[tuple[Candidate, EvidenceSpan]] = []
+    entity_cands = [c for c in output.candidates if isinstance(c, EntityCandidate)]
+    pairs += _category_matched_spans(
+        entity_cands, list(gold.entities), match_entities(output.candidates, gold)
+    )
+    relation_cands = [c for c in output.candidates if isinstance(c, RelationCandidate)]
+    pairs += _category_matched_spans(
+        relation_cands, list(gold.relations), match_relations(output.candidates, gold)
+    )
+    attr_cands = [c for c in output.candidates if isinstance(c, AttributeAssertionCandidate)]
+    pairs += _category_matched_spans(
+        attr_cands, list(gold.attributes), match_attributes(output.candidates, gold)
+    )
+    return pairs
+
+
+def _category_matched_spans(
+    candidates: Sequence[Candidate],
+    gold_items: Sequence[object],
+    match: CategoryMatch,
+) -> list[tuple[Candidate, EvidenceSpan]]:
+    """Matched candidate/gold-span pairs for one category (unmatched skipped)."""
+    pairs: list[tuple[Candidate, EvidenceSpan]] = []
     for j, candidate in enumerate(candidates):
         gi = match.matched_gold_indices[j]
         if gi is None:
@@ -291,9 +322,31 @@ def _category_span_counts(
         span = getattr(gold_items[gi], "evidence", None)
         if span is None:
             continue
-        checked += 1
-        if _covers_span(candidate, span, store):
-            covered += 1
+        pairs.append((candidate, span))
+    return pairs
+
+
+def _span_coverage_counts(output: ArmOutput, gold: GoldSet) -> tuple[int, int]:
+    """Matched gold items with a span, of which a citation covers the span."""
+    store = output.evidence
+    pairs = _matched_gold_spans(output, gold)
+    checked = len(pairs)
+    covered = sum(1 for candidate, span in pairs if _covers_span(candidate, span, store))
+    return checked, covered
+
+
+def _span_overlap_counts(output: ArmOutput, gold: GoldSet) -> tuple[int, int]:
+    """Matched gold items with offsets, of which a citation's typed span overlaps."""
+    store = output.evidence
+    pairs = [
+        (candidate, span)
+        for candidate, span in _matched_gold_spans(output, gold)
+        if span.start is not None and span.end is not None
+    ]
+    checked = len(pairs)
+    covered = sum(
+        1 for candidate, span in pairs if _overlaps_span(candidate, span, store)
+    )
     return checked, covered
 
 

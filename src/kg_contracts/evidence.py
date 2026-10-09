@@ -52,6 +52,41 @@ class ValidPeriod(BaseModel):
         return self
 
 
+class TextSpan(BaseModel):
+    """A typed character span into the source document an evidence item names.
+
+    `start`/`end` are half-open character offsets into the *document*
+    (`document.text[start:end]` is exactly the text the span covers), not into
+    an arbitrary fragment. `quote`, when known, is that exact text carried
+    alongside, so a reader holding the evidence does not have to slice the
+    source to recover the exact text the span names.
+
+    This is the typed alternative to parsing the `chunk:{i}@chars:{s}-{e}`
+    fragment that legacy `Evidence.source_locator` strings embed. It is purely
+    additive (ADR candidate 0011): every existing `Evidence` keeps its
+    `source_locator` unchanged, and `span` defaults to `None`.
+
+    When `quote` is populated from extraction it is verified by **exact
+    substring match** with no Unicode or whitespace normalisation (ADR
+    candidate 0011); a span may therefore carry `quote=None` (offsets known,
+    text not retained or not verifiable). Offsets are document-wide, so two
+    overlapping window chunks can yield two evidences naming the same span —
+    de-duplicate on the span, not on the evidence id.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    quote: str | None = None
+
+    @model_validator(mode="after")
+    def _check_ordering(self) -> "TextSpan":
+        if self.start > self.end:
+            raise ValueError("start must be <= end")
+        return self
+
+
 class Provenance(BaseModel):
     """Where a record came from. Never dropped."""
 
@@ -108,6 +143,11 @@ class Evidence(BaseModel):
     payload_hash: str | None = None
     content: str | None = None
     error: str | None = None
+    span: TextSpan | None = None
+    """Typed character span this evidence points at, when known (ADR candidate
+    0011). `None` for evidence that is not anchored to a character range (an
+    API response, a whole row, a document-level artifact). Additive: the legacy
+    `source_locator` fragment string is unchanged."""
     provenance: Provenance
 
     @model_validator(mode="after")
@@ -168,6 +208,7 @@ def present_evidence(
     valid_time: ValidPeriod | None = None,
     content: str | None = None,
     payload_hash: str | None = None,
+    span: TextSpan | None = None,
 ) -> Evidence:
     """Build PRESENT evidence. Requires `content` or `payload_hash`."""
     return Evidence(
@@ -180,6 +221,7 @@ def present_evidence(
         valid_time=valid_time,
         content=content,
         payload_hash=payload_hash,
+        span=span,
     )
 
 
