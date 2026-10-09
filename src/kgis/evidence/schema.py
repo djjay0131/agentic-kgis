@@ -41,14 +41,21 @@ _REDACTION_COLUMNS = (
     ("redaction_reason", "TEXT"),
 )
 
+# Indexes added after the v1 evidence tables shipped. `ix_refs_evidence` backs
+# the evidence -> subjects reverse lookup (issue #59: `subjects_for`). Fresh
+# databases get it from SCHEMA_SQL above; this idempotent step brings an
+# existing database forward, including a caller-supplied connection.
+_REFS_INDEXES = (("ix_refs_evidence", "evidence_refs", "evidence_id"),)
+
 
 def ensure_evidence_schema(conn: sqlite3.Connection) -> None:
-    """Add post-v1 columns to an existing `evidence` table, idempotently.
+    """Add post-v1 columns and indexes to an existing schema, idempotently.
 
-    A no-op when the table does not exist yet (a pre-built connection whose
-    caller has not applied the schema, which was already unsupported) or when
-    the columns are present. `ALTER TABLE ADD COLUMN` is safe to re-run only
-    guarded like this, so the column set is probed first.
+    A no-op when the `evidence` table does not exist yet (a pre-built
+    connection whose caller has not applied the schema, which was already
+    unsupported) or when the columns/indexes are present. `ALTER TABLE ADD
+    COLUMN` is safe to re-run only guarded like this, so the column set is
+    probed first; `CREATE INDEX IF NOT EXISTS` is inherently idempotent.
     """
     table = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evidence'"
@@ -59,6 +66,14 @@ def ensure_evidence_schema(conn: sqlite3.Connection) -> None:
     for name, kind in _REDACTION_COLUMNS:
         if name not in present:
             conn.execute(f"ALTER TABLE evidence ADD COLUMN {name} {kind}")
+    refs_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evidence_refs'"
+    ).fetchone()
+    if refs_table is not None:
+        for name, index_table, column in _REFS_INDEXES:
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS {name} ON {index_table} ({column})"
+            )
 
 
 def open_evidence_db(path: str | os.PathLike[str]) -> sqlite3.Connection:

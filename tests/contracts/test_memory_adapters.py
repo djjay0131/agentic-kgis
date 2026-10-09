@@ -140,6 +140,131 @@ def test_memory_graph_store_mark_superseded_updates_stored_assertion():
     assert stored.status is CurationStatus.SUPERSEDED
     assert stored.superseded_at == at
 
+    # The id index must track the in-place status change, not serve a stale
+    # ACTIVE copy: hidden by default, surfaced with include_superseded.
+    assert store.get_assertion(assertion.assertion_id) is None
+    fetched = store.get_assertion(
+        assertion.assertion_id, options=GraphReadOptions(include_superseded=True)
+    )
+    assert fetched is not None
+    assert fetched.status is CurationStatus.SUPERSEDED
+    assert fetched.superseded_at == at
+
+
+def _create_identity(store: MemoryGraphStore, entity: CanonicalEntity) -> None:
+    store.apply(
+        GraphMutationBatch(
+            plan_id="pl_seed",
+            operations=(
+                CurationOperation(
+                    type=CurationOperationType.CREATE_IDENTITY,
+                    payload=entity.model_dump(mode="python"),
+                ),
+            ),
+        ),
+        preconditions=(),
+    )
+
+
+def _attach(store: MemoryGraphStore, assertion, plan_id: str):
+    return store.apply(
+        GraphMutationBatch(
+            plan_id=plan_id,
+            operations=(
+                CurationOperation(
+                    type=CurationOperationType.ATTACH_ASSERTION,
+                    payload=assertion.model_dump(mode="python"),
+                ),
+            ),
+        ),
+        preconditions=(),
+    )
+
+
+def test_memory_graph_store_rejects_duplicate_assertion_id_attach():
+    # Issue #59 review: the subject-keyed `_assertions` list and the
+    # `assertion_id` index must not diverge. Attaching the same id twice in a
+    # later batch is a loud non-commit naming the id, and the store is left
+    # otherwise untouched (no epoch consumed, still exactly one stored).
+    store = MemoryGraphStore()
+    entity = make_entity()
+    _create_identity(store, entity)
+    assertion = make_assertion(subject_identity=entity.identity_id)
+
+    assert _attach(store, assertion, "pl_attach_1").committed is True
+    epoch_after_first = store.current_epoch()
+
+    duplicate = _attach(store, assertion, "pl_attach_2")
+    assert duplicate.committed is False
+    assert duplicate.error is not None
+    assert assertion.assertion_id in duplicate.error
+    assert store.current_epoch() == epoch_after_first
+    assert [a.assertion_id for a in store.assertions_for(entity.identity_id)] == [
+        assertion.assertion_id
+    ]
+
+
+def test_memory_graph_store_rejects_duplicate_assertion_id_within_one_batch():
+    # Same invariant inside a single batch: two ATTACHes of one id fail the
+    # batch as a unit (atomicity — no partial commit), not just the second op.
+    store = MemoryGraphStore()
+    entity = make_entity()
+    assertion = make_assertion(subject_identity=entity.identity_id)
+    result = store.apply(
+        GraphMutationBatch(
+            plan_id="pl_dup_batch",
+            operations=(
+                CurationOperation(
+                    type=CurationOperationType.CREATE_IDENTITY,
+                    payload=entity.model_dump(mode="python"),
+                ),
+                CurationOperation(
+                    type=CurationOperationType.ATTACH_ASSERTION,
+                    payload=assertion.model_dump(mode="python"),
+                ),
+                CurationOperation(
+                    type=CurationOperationType.ATTACH_ASSERTION,
+                    payload=assertion.model_dump(mode="python"),
+                ),
+            ),
+        ),
+        preconditions=(),
+    )
+
+    assert result.committed is False
+    assert result.error is not None
+    assert assertion.assertion_id in result.error
+    assert store.current_epoch() == 0
+    assert store.get_entity(entity.identity_id) is None
+    assert store.get_assertion(assertion.assertion_id) is None
+
+
+def test_memory_graph_store_retract_is_unimplemented_and_must_update_id_index():
+    # A test note, not a behaviour: RETRACT_ASSERTION is Plan 3. When it lands
+    # it must delete from `_assertions_by_id` alongside `_assertions`, or
+    # `get_assertion` will serve an assertion `assertions_for` no longer
+    # returns. Pinned here so the requirement has a home at the point of
+    # failure, next to the duplicate-id test that guards the same index pair.
+    store = MemoryGraphStore()
+    entity = make_entity()
+    _create_identity(store, entity)
+    assertion = make_assertion(subject_identity=entity.identity_id)
+    assert _attach(store, assertion, "pl_attach").committed is True
+
+    with pytest.raises(NotImplementedError):
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_retract",
+                operations=(
+                    CurationOperation(
+                        type=CurationOperationType.RETRACT_ASSERTION,
+                        payload={"assertion_id": assertion.assertion_id},
+                    ),
+                ),
+            ),
+            preconditions=(),
+        )
+
 
 class _NonTemporalMemoryGraphStore(MemoryGraphStore):
     """A MemoryGraphStore that declares NO temporal-query support.

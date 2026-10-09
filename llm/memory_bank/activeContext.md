@@ -1,5 +1,61 @@
 # Active Context — agentic-kgis
 
+Update 2026-10-09: **provenance read ports KGPS needs** (issue #59, ADR-0029
+Proposed; no version change — release is separate). The 2026-10-07 KGPS
+(PA-AKG) provenance audit needed two reads KGIS lacked.
+
+**(1) `GraphReader.get_assertion(assertion_id, options)` — a second canonical
+read key.** The canonical read surface was identity-keyed only
+(`get_entity`, `assertions_for`), so KGPS built a `GraphAssertionIndex` by
+scanning every entity — fine for tests, **O(graph) in production**. The new
+method resolves one assertion by id and honours **exactly** the visibility
+rules `assertions_for` applies: the `curation_epoch` filter, the
+`include_superseded` / `include_revoked` status switches (ADR-0025), the
+subject-revoke shield (ADR-0026), and the `valid_at` / `transaction_at`
+temporal filters. A hidden or unknown assertion returns `None`; there is no
+second, weaker path into the canonical graph. It is deliberately **not** a
+marker subprotocol: one read surface keeps one visibility definition, and the
+id key is a second index, not a second surface. `MemoryGraphStore` backs it
+with an `assertion_id -> Assertion` index kept in lockstep with the
+subject-keyed store (including `mark_superseded` and the begin/rollback
+snapshot), so the lookup never scans.
+
+`AdapterCapabilities.supports_assertion_lookup` (default `False`) advertises
+that an adapter answers the lookup by index rather than a scan; the memory
+store declares it `True`. The default keeps the `AdapterCapabilities` change
+backward compatible for every existing construction site.
+
+**(2) `SqliteEvidenceRegistry.subjects_for(evidence_id, relationship=None)` —
+the reverse of `refs_for`,** for KGPS `impacted_by(evidence_id)`: the distinct
+subjects citing an evidence id, optionally narrowed to one
+`EvidenceRelationship`, ordered deterministically. Backed by
+`ix_refs_evidence` (added with the #61 erasure work's orphan check) — an index
+probe, not a scan. `ensure_evidence_schema` now also ensures that index
+idempotently, so an existing database opened through a caller-supplied
+connection gains it.
+
+**Conformance.** `GraphMutationStoreContract` gains four `get_assertion`
+cases (active; superseded hidden then revealed; revoked subject shielded then
+revealed; unknown id → `None`) so the `agentic-kg` Neo4j store is held to the
+same parity, plus two `EvidenceRegistryContract` reverse-lookup cases.
+Follow-up, deliberately not done here: `agentic-kg`'s
+`Neo4jCanonicalGraphStore` must implement `get_assertion`. 849 passed, ruff
+clean, `mypy --strict` clean (79 files), governance 4/4. KGPS tracking issue
+djjay0131/agentic-kgps#1.
+
+**Review round (2026-10-09).** Four findings fixed. (1) The ADR is
+**ADR-0029**, not 0028 — open draft PR #63 already claims 0028. (2) ADR-0029
+§6 records the `runtime_checkable` widening hazard: adding `get_assertion`
+narrows `isinstance(store, GraphReader)`, so a store lacking it silently stops
+matching and `agentic-kgcs`'s executor (~L243) would skip its snapshot
+preconditions; mitigation is that adapters must implement the method (a
+scanning mixin default deferred). (3) `MemoryGraphStore.apply` now rejects a
+duplicate-`assertion_id` `ATTACH` (existing or staged in the same batch) as a
+loud non-commit, so the subject-keyed list and the id index cannot diverge;
+two tests pin it. (4) A code + test note records that any future
+`RETRACT_ASSERTION` must update `_assertions_by_id` in lockstep. 852 passed,
+ruff clean, `mypy --strict` clean (79 files), governance 4/4.
+
 Update 2026-10-09 (review round): **PR #67 review findings on typed spans**
 (issue #56, ADR candidate 0011; no version change — the `2.1.0 -> 2.2.0` bump is
 already on the branch). Three findings, all addressed:

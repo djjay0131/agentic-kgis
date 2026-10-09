@@ -64,3 +64,31 @@ class EvidenceRegistryContract:
                                        relationship=EvidenceRelationship.SUPPORTS)])
         with pytest.raises(EvidenceNotFoundError):
             reg.resolve("s")
+
+    def test_subjects_for_is_the_reverse_of_refs_for(self) -> None:
+        # Issue #59: KGPS `impacted_by(evidence_id)` needs the evidence ->
+        # subjects direction. Every subject that cites an id is returned, with
+        # a relationship filter narrowing the result.
+        reg = self.make_registry()
+        reg.add_refs("s1", [
+            EvidenceRef(evidence_id="e", relationship=EvidenceRelationship.SUPPORTS),
+        ])
+        reg.add_refs("s2", [
+            EvidenceRef(evidence_id="e", relationship=EvidenceRelationship.CONTRADICTS),
+        ])
+        assert set(reg.subjects_for("e")) == {"s1", "s2"}
+        assert reg.subjects_for("e", EvidenceRelationship.SUPPORTS) == ["s1"]
+        assert reg.subjects_for("e", EvidenceRelationship.CONTRADICTS) == ["s2"]
+        # An id nobody cites has no subjects — empty, not an error.
+        assert reg.subjects_for("uncited") == []
+
+    def test_subjects_for_deduplicates_a_subject_citing_under_two_relationships(self) -> None:
+        # The ref primary key is (subject, evidence, relationship), so one
+        # subject may cite one evidence item several times; the reverse lookup
+        # must name the subject once.
+        reg = self.make_registry()
+        reg.add_refs("s1", [
+            EvidenceRef(evidence_id="e", relationship=EvidenceRelationship.SUPPORTS),
+            EvidenceRef(evidence_id="e", relationship=EvidenceRelationship.CONTEXTUALIZES),
+        ])
+        assert reg.subjects_for("e") == ["s1"]
