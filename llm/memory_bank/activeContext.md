@@ -43,6 +43,19 @@ Follow-up, deliberately not done here: `agentic-kg`'s
 clean, `mypy --strict` clean (79 files), governance 4/4. KGPS tracking issue
 djjay0131/agentic-kgps#1.
 
+**Review round (2026-10-09).** Four findings fixed. (1) The ADR is
+**ADR-0029**, not 0028 — open draft PR #63 already claims 0028. (2) ADR-0029
+§6 records the `runtime_checkable` widening hazard: adding `get_assertion`
+narrows `isinstance(store, GraphReader)`, so a store lacking it silently stops
+matching and `agentic-kgcs`'s executor (~L243) would skip its snapshot
+preconditions; mitigation is that adapters must implement the method (a
+scanning mixin default deferred). (3) `MemoryGraphStore.apply` now rejects a
+duplicate-`assertion_id` `ATTACH` (existing or staged in the same batch) as a
+loud non-commit, so the subject-keyed list and the id index cannot diverge;
+two tests pin it. (4) A code + test note records that any future
+`RETRACT_ASSERTION` must update `_assertions_by_id` in lockstep. 852 passed,
+ruff clean, `mypy --strict` clean (79 files), governance 4/4.
+
 Update 2026-10-08 (review round): **U8 erasure cascade hardened against
 re-ingestion and idempotency gaps** (PR #65 review findings; no version change).
 Four findings on the erasure cascade, all addressed:
