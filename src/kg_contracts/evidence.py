@@ -61,6 +61,9 @@ class Provenance(BaseModel):
     source_ref: str | None = None
     actor: str
     model: str | None = None
+    model_version: str | None = None
+    """The producing model's version (ADR-0023). `model` names the model;
+    this names *which version* of it produced the evidence."""
     prompt_version: str | None = None
 
 

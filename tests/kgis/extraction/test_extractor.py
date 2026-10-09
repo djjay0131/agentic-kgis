@@ -71,6 +71,19 @@ def test_producer_encodes_extractor_and_version() -> None:
     assert candidate.producer == "kgis.extraction:player@7"
 
 
+def test_candidate_carries_model_and_extractor_versions() -> None:
+    config = player_config(extractor_version="7")
+    extractor = LLMExtractor(config, ScriptedModel(player_and_skill_script()))
+    candidate = extractor.extract(
+        _player_chunk(), _context(config.producer("kgis.extraction"), config.scoring)
+    )[0]
+    # ADR-0023: the candidate self-describes its producing model and versions.
+    assert candidate.model_id == "fake-model-1"
+    assert candidate.model_version == "2026-08"
+    assert candidate.extractor_version == "7"
+    assert candidate.prompt_version == "p1"
+
+
 def test_source_passage_representation_carries_model_and_text() -> None:
     config = player_config(model_id="claude-fake")
     extractor = LLMExtractor(config, ScriptedModel(player_and_skill_script()))

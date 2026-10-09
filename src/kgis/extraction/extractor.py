@@ -19,7 +19,11 @@ extraction candidate:
   (ADR-0004).
 - **The passage as a representation.** A `source_passage` text representation
   carries the chunk text and the `model` that read it, so the candidate itself
-  names its model — the envelope has no dedicated model field.
+  names its model.
+- **Model/extractor provenance on the envelope.** `model_id`, `model_version`,
+  `extractor_version`, and `prompt_version` are stamped onto the candidate from
+  its `ExtractorConfig` (ADR-0023), so a consumer holding only the candidate can
+  answer "which model version produced this?" without a registry round-trip.
 
 Malformed model output and un-buildable rows raise (`ExtractionParseError`,
 `RecordDataError`, pydantic `ValidationError`); the runner catches them per
@@ -84,7 +88,8 @@ class LLMExtractor:
         return candidates
 
     def _finalize(self, candidate: Candidate, item: ExtractedItem, chunk: Chunk) -> Candidate:
-        """Overlay model-reported confidence and the source-passage representation."""
+        """Overlay model-reported confidence, the source-passage representation,
+        and the extractor/model provenance block (ADR-0023)."""
         scores = candidate.scores
         if item.confidence is not None:
             scores = self._with_extraction_confidence(scores, item.confidence)
@@ -96,7 +101,14 @@ class LLMExtractor:
             model=self._config.model_id,
         )
         return candidate.model_copy(
-            update={"scores": scores, "representations": representations}
+            update={
+                "scores": scores,
+                "representations": representations,
+                "model_id": self._config.model_id,
+                "model_version": self._config.model_version,
+                "extractor_version": self._config.extractor_version,
+                "prompt_version": self._config.prompt_version,
+            }
         )
 
     @staticmethod

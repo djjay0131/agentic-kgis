@@ -59,6 +59,25 @@ def test_put_many_is_atomic_on_mid_batch_failure(monkeypatch):
     assert count == 0  # first insert rolled back, nothing committed
 
 
+def test_provenance_model_version_round_trips_through_the_registry():
+    """ADR-0023's `Provenance.model_version` survives `put`/`get` via
+    `evidence_json` (no new column required)."""
+    reg = SqliteEvidenceRegistry(":memory:")
+    prov = Provenance(
+        source="s3://reports/doc-1.txt", actor="player", model="claude-fake",
+        model_version="2026-08", prompt_version="p3",
+    )
+    reg.put(present_evidence(
+        evidence_id="src:k@mv", source_type="document", source_locator="doc-1",
+        observed_at=NOW, content="x", provenance=prov,
+    ))
+    got = reg.get("src:k@mv")
+    assert got is not None
+    assert got.provenance.model_version == "2026-08"
+    assert got.provenance.model == "claude-fake"
+    assert got.provenance.prompt_version == "p3"
+
+
 def test_put_is_idempotent_by_id():
     reg = SqliteEvidenceRegistry(":memory:")
     ev = present_evidence(evidence_id="src:k@1", source_type="api", source_locator="k",
