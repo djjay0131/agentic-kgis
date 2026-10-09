@@ -20,14 +20,15 @@ Three properties are deliberate:
   is the anchor idempotency rides on; it is not the row's stream position,
   which a re-query could reshuffle.
 
-- **The snapshot version is stamped into the locator.** `locator` carries
-  `@snapshot=<version>` by default, so every candidate's `source_coordinates`
-  records *which* snapshot it was read from — deterministic source-version
-  provenance on the candidate itself, without touching the frozen contract.
-  Two runs over a stable snapshot share the version and so share coordinates;
-  a re-sync that read changed data gets a new version, honestly. Set
+- **The snapshot version is first-class on the coordinates.** Every candidate's
+  `source_coordinates.source_version` carries the pinned snapshot's version
+  (ADR-0022), the dedicated home for *which* read of the source produced the
+  fact. The locator is still stamped `@snapshot=<version>` by default so
+  existing consumers and locator-based idempotency are unchanged; set
   `include_snapshot_in_locator=False` to keep the locator snapshot-independent
-  when the caller wants coordinates identical across data revisions.
+  while `source_version` still records the read. Either way two runs over a
+  stable snapshot agree; a re-sync that read changed data gets a new version,
+  honestly.
 """
 
 from __future__ import annotations
@@ -95,6 +96,7 @@ class StructuredRecordReader:
                     source_type=source_type,
                     locator=locator,
                     fragment=_fragment(data, key_fields, index),
+                    source_version=snapshot.version,
                 ),
                 data=data,
             )

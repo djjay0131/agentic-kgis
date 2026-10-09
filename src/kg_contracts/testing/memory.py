@@ -39,7 +39,13 @@ from kg_contracts.stores import (
     UnsupportedCapabilityError,
 )
 
-_TxnSnapshot = tuple[dict[str, CanonicalEntity], dict[str, list[Assertion]], dict[str, int], int]
+_TxnSnapshot = tuple[
+    dict[str, CanonicalEntity],
+    dict[str, list[Assertion]],
+    dict[str, Assertion],
+    dict[str, int],
+    int,
+]
 
 
 class MemoryCandidateSink:
@@ -150,13 +156,22 @@ class MemoryGraphStore:
         self._epoch: int = 0
         self._entities: dict[str, CanonicalEntity] = {}
         self._assertions: dict[str, list[Assertion]] = {}
+        # `assertion_id -> Assertion`, kept in lockstep with `_assertions` so
+        # `get_assertion` is an O(1) id lookup rather than a scan over every
+        # subject (issue #59). `_assertions` stays the subject-keyed read
+        # index `assertions_for` walks; this is the id-keyed one.
+        self._assertions_by_id: dict[str, Assertion] = {}
         self._entity_versions: dict[str, int] = {}
         self._txn_snapshot: _TxnSnapshot | None = None
 
     # --- CapabilityDeclaring -------------------------------------------------
 
     def capabilities(self) -> AdapterCapabilities:
-        return AdapterCapabilities(supports_temporal_queries=True, supports_snapshot_reads=True)
+        return AdapterCapabilities(
+            supports_temporal_queries=True,
+            supports_snapshot_reads=True,
+            supports_assertion_lookup=True,
+        )
 
     # --- GraphWriter (adapter-internal; used by apply()) ----------------------
 
@@ -165,14 +180,19 @@ class MemoryGraphStore:
 
     def put_assertion(self, assertion: Assertion) -> None:
         self._assertions.setdefault(assertion.subject_identity, []).append(assertion)
+        self._assertions_by_id[assertion.assertion_id] = assertion
 
     def mark_superseded(self, assertion_id: str, at: datetime) -> None:
         for subject_assertions in self._assertions.values():
             for index, assertion in enumerate(subject_assertions):
                 if assertion.assertion_id == assertion_id:
-                    subject_assertions[index] = assertion.model_copy(
+                    updated = assertion.model_copy(
                         update={"status": CurationStatus.SUPERSEDED, "superseded_at": at}
                     )
+                    subject_assertions[index] = updated
+                    # Keep the id index pointing at the same (replaced) object
+                    # so `get_assertion` never serves a stale copy.
+                    self._assertions_by_id[assertion_id] = updated
                     return
         raise KeyError(f"no assertion with assertion_id {assertion_id!r}")
 
@@ -182,6 +202,7 @@ class MemoryGraphStore:
         self._txn_snapshot = (
             dict(self._entities),
             {subject: list(assertions) for subject, assertions in self._assertions.items()},
+            dict(self._assertions_by_id),
             dict(self._entity_versions),
             self._epoch,
         )
@@ -192,9 +213,10 @@ class MemoryGraphStore:
     def rollback(self) -> None:
         if self._txn_snapshot is None:
             raise RuntimeError("rollback() called without a matching begin()")
-        entities, assertions, versions, epoch = self._txn_snapshot
+        entities, assertions, assertions_by_id, versions, epoch = self._txn_snapshot
         self._entities = entities
         self._assertions = assertions
+        self._assertions_by_id = assertions_by_id
         self._entity_versions = versions
         self._epoch = epoch
         self._txn_snapshot = None
@@ -228,6 +250,7 @@ class MemoryGraphStore:
         # identity" because the target is not yet in `self._entities`.
         staged_entities: dict[str, CanonicalEntity] = {}
         new_assertions: list[Assertion] = []
+        staged_assertion_ids: set[str] = set()
         touched_subjects: list[str] = []
         for operation in batch.operations:
             if operation.type is CurationOperationType.CREATE_IDENTITY:
@@ -240,6 +263,27 @@ class MemoryGraphStore:
                 assertion = Assertion.model_validate(
                     {**operation.payload, "curation_epoch": new_epoch}
                 )
+                # `assertion_id` is the id index's key, and the two indexes
+                # must not diverge: a duplicate id would append a second entry
+                # to the subject-keyed `_assertions` list while
+                # `_assertions_by_id` kept only the last, so `assertions_for`
+                # and `get_assertion` would disagree on the same id (issue #59
+                # review). Reject rather than silently corrupt the pair, and
+                # check the staged batch too so a single batch that attaches
+                # the same id twice fails atomically before any mutation.
+                if (
+                    assertion.assertion_id in self._assertions_by_id
+                    or assertion.assertion_id in staged_assertion_ids
+                ):
+                    return CommitResult(
+                        batch_id=batch.batch_id,
+                        committed=False,
+                        error=(
+                            "ATTACH_ASSERTION duplicates an existing assertion_id: "
+                            f"{assertion.assertion_id!r}"
+                        ),
+                    )
+                staged_assertion_ids.add(assertion.assertion_id)
                 new_assertions.append(assertion)
                 touched_subjects.append(assertion.subject_identity)
             elif operation.type is CurationOperationType.REVOKE_IDENTITY:
@@ -330,6 +374,15 @@ class MemoryGraphStore:
                 )
                 touched_subjects.append(identity_id)
             else:
+                # Plan 3. If a future RETRACT_ASSERTION (or any operation that
+                # removes or reassigns an assertion) is implemented here, it
+                # MUST update `_assertions_by_id` in lockstep with `_assertions`
+                # — a retraction that drops the subject-keyed entry but leaves
+                # the id index behind would let `get_assertion` serve an
+                # assertion `assertions_for` no longer returns. The writer
+                # primitives keep the pair in step today (`put_assertion` adds
+                # to both, `mark_superseded` replaces both); a delete needs the
+                # matching index delete. Pinned by the duplicate-id test.
                 raise NotImplementedError(
                     f"{operation.type} is not implemented in Plan 1 (lands in Plan 3)"
                 )
@@ -411,6 +464,30 @@ class MemoryGraphStore:
                 continue
             results.append(assertion)
         return results
+
+    def get_assertion(
+        self, assertion_id: str, options: GraphReadOptions = GraphReadOptions()
+    ) -> Assertion | None:
+        # Issue #59: resolve by id through the index (no scan). Visibility is
+        # applied exactly as `assertions_for` does — the subject-revoke shield,
+        # the record's own status flags, the epoch filter, and the temporal
+        # filters — so a single-id read can never surface what the list read
+        # would hide.
+        self._check_temporal_options(options)
+        assertion = self._assertions_by_id.get(assertion_id)
+        if assertion is None:
+            return None
+        if not self._subject_visible(assertion.subject_identity, options):
+            return None
+        if not self._is_visible(assertion.curation_epoch, assertion.status, options):
+            return None
+        if options.valid_at is not None and not _valid_at_matches(assertion, options.valid_at):
+            return None
+        if options.transaction_at is not None and not _transaction_at_matches(
+            assertion, options.transaction_at
+        ):
+            return None
+        return assertion
 
     def neighborhood(
         self, identity_id: str, hops: int = 1, options: GraphReadOptions = GraphReadOptions()

@@ -18,8 +18,17 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION: str = "2.0.0"
-"""Semver of the kg_contracts contract shape, stamped into every `CandidateEnvelope`."""
+CONTRACT_VERSION: str = "2.2.0"
+"""Semver of the kg_contracts contract shape, stamped into every `CandidateEnvelope`.
+
+Bumped 2.0.0 -> 2.1.0 by ADR-0022/ADR-0023: new *optional* fields
+(`SourceCoordinates.source_version`, the `CandidateEnvelope` model/extractor
+version block, `Provenance.model_version`) are purely additive, so already
+produced candidates remain valid — a backward-compatible minor bump.
+
+Bumped 2.1.0 -> 2.2.0 by ADR candidate 0011: `Evidence.span` (a typed
+`TextSpan`) is a new *optional* field, and `TextSpan` is new — nothing already
+produced is invalidated, so this too is a backward-compatible minor bump."""
 
 
 class VersionedComponentKind(StrEnum):

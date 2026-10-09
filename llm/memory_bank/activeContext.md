@@ -1,5 +1,190 @@
 # Active Context — agentic-kgis
 
+Update 2026-10-09: **provenance read ports KGPS needs** (issue #59, ADR-0029
+Proposed; no version change — release is separate). The 2026-10-07 KGPS
+(PA-AKG) provenance audit needed two reads KGIS lacked.
+
+**(1) `GraphReader.get_assertion(assertion_id, options)` — a second canonical
+read key.** The canonical read surface was identity-keyed only
+(`get_entity`, `assertions_for`), so KGPS built a `GraphAssertionIndex` by
+scanning every entity — fine for tests, **O(graph) in production**. The new
+method resolves one assertion by id and honours **exactly** the visibility
+rules `assertions_for` applies: the `curation_epoch` filter, the
+`include_superseded` / `include_revoked` status switches (ADR-0025), the
+subject-revoke shield (ADR-0026), and the `valid_at` / `transaction_at`
+temporal filters. A hidden or unknown assertion returns `None`; there is no
+second, weaker path into the canonical graph. It is deliberately **not** a
+marker subprotocol: one read surface keeps one visibility definition, and the
+id key is a second index, not a second surface. `MemoryGraphStore` backs it
+with an `assertion_id -> Assertion` index kept in lockstep with the
+subject-keyed store (including `mark_superseded` and the begin/rollback
+snapshot), so the lookup never scans.
+
+`AdapterCapabilities.supports_assertion_lookup` (default `False`) advertises
+that an adapter answers the lookup by index rather than a scan; the memory
+store declares it `True`. The default keeps the `AdapterCapabilities` change
+backward compatible for every existing construction site.
+
+**(2) `SqliteEvidenceRegistry.subjects_for(evidence_id, relationship=None)` —
+the reverse of `refs_for`,** for KGPS `impacted_by(evidence_id)`: the distinct
+subjects citing an evidence id, optionally narrowed to one
+`EvidenceRelationship`, ordered deterministically. Backed by
+`ix_refs_evidence` (added with the #61 erasure work's orphan check) — an index
+probe, not a scan. `ensure_evidence_schema` now also ensures that index
+idempotently, so an existing database opened through a caller-supplied
+connection gains it.
+
+**Conformance.** `GraphMutationStoreContract` gains four `get_assertion`
+cases (active; superseded hidden then revealed; revoked subject shielded then
+revealed; unknown id → `None`) so the `agentic-kg` Neo4j store is held to the
+same parity, plus two `EvidenceRegistryContract` reverse-lookup cases.
+Follow-up, deliberately not done here: `agentic-kg`'s
+`Neo4jCanonicalGraphStore` must implement `get_assertion`. 849 passed, ruff
+clean, `mypy --strict` clean (79 files), governance 4/4. KGPS tracking issue
+djjay0131/agentic-kgps#1.
+
+**Review round (2026-10-09).** Four findings fixed. (1) The ADR is
+**ADR-0029**, not 0028 — open draft PR #63 already claims 0028. (2) ADR-0029
+§6 records the `runtime_checkable` widening hazard: adding `get_assertion`
+narrows `isinstance(store, GraphReader)`, so a store lacking it silently stops
+matching and `agentic-kgcs`'s executor (~L243) would skip its snapshot
+preconditions; mitigation is that adapters must implement the method (a
+scanning mixin default deferred). (3) `MemoryGraphStore.apply` now rejects a
+duplicate-`assertion_id` `ATTACH` (existing or staged in the same batch) as a
+loud non-commit, so the subject-keyed list and the id index cannot diverge;
+two tests pin it. (4) A code + test note records that any future
+`RETRACT_ASSERTION` must update `_assertions_by_id` in lockstep. 852 passed,
+ruff clean, `mypy --strict` clean (79 files), governance 4/4.
+
+Update 2026-10-09 (review round): **PR #67 review findings on typed spans**
+(issue #56, ADR candidate 0011; no version change — the `2.1.0 -> 2.2.0` bump is
+already on the branch). Three findings, all addressed:
+
+1. **BLOCKER privacy — redaction leaked the quote.** `_redact_evidence_stmt`
+   nulled only `content`, so a verified per-item quote survived verbatim inside
+   `span.quote` in `evidence_json`. Redaction now clears `span.quote` alongside
+   `content` and keeps the span **offsets** (`start`/`end`), so the reader still
+   knows where the evidence pointed without retaining the text. A quote-only row
+   (its `content` already gone) is now redacted too, and the terminal-redaction
+   no-op from #65 keeps it cleared on re-extraction. Pinned end-to-end: extract
+   with a verified quote → `ErasureCoordinator.erase` → `content is None` **and**
+   `span.quote is None`, offsets unchanged; re-running extraction does not
+   restore it.
+2. **Repeated quotes collapsed to first occurrence.** `_pop_quote` used
+   `chunk_text.find`, anchoring every duplicate to the first occurrence, so two
+   items quoting "Paris" produced one evidence id. The parser now tracks a
+   per-parse set of used offsets and anchors each item to the **next unused
+   occurrence** (scanning from each match's `+1`, so overlapping occurrences are
+   distinct); only when every occurrence is claimed does it fall back to the
+   first. Tested at the parser level and at the extractor level (two identical
+   quotes → two distinct spans and evidence ids).
+3. **Documentation.** `parse.py` (module + `_pop_quote` + `OutputParser`
+   protocol), `provenance.quote_evidence_id`, `TextSpan`, and ADR candidate 0011
+   now record that quote matching is **exact** with no Unicode/whitespace
+   normalisation (fails closed as `quote_not_verified`), and that **overlapping
+   window chunks can give the same document span two ids** — de-duplicate on the
+   span, not the id.
+
+PR body also notes the `OutputParser.parse` keyword-only signature change for
+custom parsers and the `CONTRACT_VERSION` `2.2.0` interaction with
+agentic-kgcs#53 (the exact-match `ContractVersionRule` rejects in-flight 2.1.0
+candidates). 878 passed, ruff clean, `mypy --strict` clean (79 files), governance
+4/4.
+
+Update 2026-10-09: **typed character spans on evidence, and verified per-item
+quotes from extraction** (issue #56, ADR candidate 0011; `CONTRACT_VERSION`
+`2.1.0 -> 2.2.0`). Span provenance was chunk-level and string-encoded: the
+fragment `chunk:{i}@chars:{s}-{e}` lived only inside `Evidence.source_locator`,
+and the item parser kept no quote, so KGPS had to regex-parse the locator and
+could cite only whole paragraphs.
+
+`kg_contracts.evidence.TextSpan(start, end, quote=None)` (frozen, `start <= end`
+validated, non-negative offsets) is added, with `Evidence.span: TextSpan | None = None`
+and an optional `span` on `present_evidence`. `[start, end)` are **document**
+offsets, so `document.text[start:end]` is the spanned text. Purely additive: the
+legacy `source_locator` string is unchanged, and the registry needs no schema
+change (it already round-trips the full `evidence_json`).
+
+Extraction now sets `span=TextSpan(chunk.start, chunk.end)` on every chunk
+evidence, so `document.text[start:end] == chunk.text`. `JsonItemsParser` lifts
+an optional per-item `"quote"`, **verifies it is an exact substring of the
+chunk**, and computes document offsets; a non-substring (or non-string/empty)
+quote is dropped with a warning — a paraphrase is never stored as a quote.
+`IngestionReport` surfaces drops as `code="quote_not_verified"`.
+
+A verified quote yields a second, span-narrowed `Evidence` (deterministic id
+keyed on chunk coordinates **and** span offsets plus extractor/model/prompt
+versions) cited from the candidate **in addition to** the chunk evidence. Both
+are `DERIVED_FROM`: KGIS records where a claim came from; whether a quote
+verifies it is KGCS/KGPS's call (ADR candidate 0011). The `LLMExtractor` returns
+the narrowed evidence alongside the candidate (`ExtractionResult` /
+`ExtractedCandidate`); the runner — the single-threaded reduce point and only
+registry writer — persists it. `kg_eval` gains a `span_overlap_rate` metric over
+matched gold `EvidenceSpan.start/end` (honest-null when the gold set carries no
+offsets). 872 passed, ruff clean, `mypy --strict` clean (79 files). After merge,
+KGPS can drop `src/kgps/spans.py` string parsing (agentic-kgps#1).
+
+Update 2026-10-08 (review round): **U8 erasure cascade hardened against
+re-ingestion and idempotency gaps** (PR #65 review findings; no version change).
+Four findings on the erasure cascade, all addressed:
+
+1. **Re-ingestion un-redacts (MEDIUM privacy).** Evidence ids are deterministic,
+   so re-extracting an erased document re-`put`s the same ids; `INSERT OR
+   REPLACE` rewrote the row, restoring content and clearing the marker with no
+   audit. `SqliteEvidenceRegistry._put_stmt` now treats a redacted id as
+   **terminal** — a put of a row carrying `redacted_at` is a no-op, so content
+   stays `NULL` and the marker survives (skip, not raise: re-ingestion is a
+   normal pipeline path). Pinned for both `put` and `put_many`.
+2. **Orphan check scope (LOW).** Documented on `_orphan_evidence_stmt` and in
+   the adopter notes: the check sees only refs registered via `add_refs`;
+   evidence cited only inside a candidate payload is treated as orphaned.
+3. **Idempotent erase (LOW).** `ErasureCoordinator.erase` detects `erased_at`
+   and returns `ErasureReport(already_erased=True)` with empty tuples, recording
+   no second erase transition and no duplicate redaction audit.
+4. **Same-file separate connections (NOTE).** `ErasureCoordinator.__init__` now
+   compares each connection's `PRAGMA database_list` file and raises
+   `ConfigurationError` naming the shared file, instead of failing later as an
+   opaque SQLite lock error.
+
+824 passed, ruff clean, `mypy --strict` clean (79 files), governance 4/4.
+
+Update 2026-10-08: **ledger erasure now cascades to the evidence registry**
+(issue #61, ADR candidate 0010; no version change — release is separate).
+KGPS upstream prerequisite **U8** (2026-10-07 audit): `SqliteCandidateLedger.erase()`
+nulled only `payload_json` and left the evidence registry untouched, so up to
+4000 chars of passage text (`_MAX_INLINE_CHARS`) plus the candidate's refs
+survived a data-subject erasure and `registry.resolve(candidate_id)` still
+returned them. The fix is `kgis.erasure.ErasureCoordinator` — a cross-store
+operation, not a ledger collaborator, so the ledger package does not depend on
+`kgis.evidence` and `erase` does not change behaviour depending on wiring. On
+`erase` it removes the candidate's refs, redacts every evidence item those refs
+**orphaned** (`content=None`, `payload_hash` retained — derived from the content
+when the evidence never had a hash — availability still `PRESENT`, plus durable
+`redacted_at`/`redaction_reason` columns on the `evidence` row), and appends one
+`kind='redact'` audit record per redaction to the ledger's append-only stream.
+"Orphan" is *zero refs*, not *zero live-candidate refs*: a revoked candidate
+keeps its refs (ADR-0013), so evidence it shares stays readable. `revoke()` is
+deliberately ledger-only and retains refs — the issue's open question answered
+as "yes, `resolve()` still returns refs after a revoke", pinned by a test.
+
+**Connection shapes are the load-bearing design detail.** Same connection (one
+`sqlite3.Connection` handed to both stores): the erase transition, ref removal,
+redaction and audit rows run in one transaction and are fully atomic. Separate
+connections (the ordinary case): writes are staged and committed
+registry-first, ledger-second, so a pre-commit failure rolls both back and the
+content is unreadable before the ledger row governance lands; the residual
+window (registry committed, ledger commit failing) raises
+`ErasureIncompleteError` instead of hiding a partial result. Separate
+connections to the *same file* are unsupported and fail closed (SQLite admits
+one writer) — pass the same connection. The evidence `evidence` table gains two
+nullable columns, migrated in place when a registry opens an older DB (no
+`kg_contracts` edit). Fourteen tests parametrise same/separate connection over
+orphan redaction, shared-evidence preservation, the audit row, mid-cascade
+rollback, revoke retention, the profile gate, the missing-candidate error, the
+derived-hash edge, and the v1→v2 column migration. 817 passed, ruff clean,
+`mypy --strict` clean (79 files). Design recorded as ADR candidate 0010
+(awaiting owner promotion); KGPS tracking issue djjay0131/agentic-kgps#1.
+
 Update 2026-10-06: **`RESTORE_IDENTITY` closes issue #51, and the owner has
 ruled on PR #54's object-side open question** (ADR-0027 Proposed; no version
 change — release is separate).

@@ -60,6 +60,11 @@ class SqliteCandidateLedger:
     def close(self) -> None:
         self._conn.close()
 
+    @property
+    def profile(self) -> ConsumerProfile:
+        """The consumer profile gating this ledger's adoption surface."""
+        return self._profile
+
     def _insert_transition(
         self,
         candidate_id: str,
@@ -233,6 +238,16 @@ class SqliteCandidateLedger:
         return updated
 
     def revoke(self, candidate_id: str, *, reason: str, actor: str) -> None:
+        """Withdraw a candidate without deleting anything.
+
+        Ledger-level only: the payload, the row, and the candidate's evidence
+        refs are all retained. Consequently
+        `SqliteEvidenceRegistry.resolve(candidate_id)` still returns the cited
+        evidence after a revoke — the data is retained, only hidden from the
+        default `ledger_entries()` listing (ADR-0013). Use
+        `kgis.erasure.ErasureCoordinator.erase` for a cascade that removes refs
+        and redacts orphaned content.
+        """
         row = self.row(candidate_id)
         if row is None or row.is_erased:
             raise KeyError(f"no live ledger entry for candidate_id {candidate_id!r}")
@@ -251,22 +266,73 @@ class SqliteCandidateLedger:
             raise
         self._conn.commit()
 
+    def _apply_erase(self, candidate_id: str, *, reason: str, actor: str) -> None:
+        """Null the payload + record the erase transition and audit row.
+
+        Writes without committing, so a `kgis.erasure.ErasureCoordinator` that
+        shares this connection can commit the ledger erase and the registry
+        cascade in one transaction.
+        """
+        row = self.row(candidate_id)
+        assert row is not None  # callers validate the row exists first
+        self._conn.execute(
+            "UPDATE ledger_entries SET payload_json = NULL, erased_at = ?, "
+            "erasure_reason = ? WHERE candidate_id = ?",
+            (_iso(self._now()), reason, candidate_id),
+        )
+        self._insert_transition(
+            candidate_id, row.processing_state, row.processing_state,
+            reason=f"erased: {reason}", actor=actor, kind="erase",
+        )
+
+    def record_redaction(
+        self,
+        candidate_id: str,
+        *,
+        evidence_id: str,
+        evidence_payload_hash: str,
+        reason: str | None,
+        actor: str,
+    ) -> None:
+        """Append an `audit_records` row for one redacted evidence item.
+
+        Writes without committing (the coordinator owns the transaction). The
+        row is keyed to the *erased candidate* whose reference removal orphaned
+        the evidence, is `kind='redact'`, and carries the evidence's retained
+        hash, so the cascade is provable from the ledger's append-only stream.
+        """
+        now = _iso(self._now())
+        assert now is not None  # self._now() never returns None
+        self._audit.append(
+            candidate_id=candidate_id,
+            transition_id=None,
+            kind="redact",
+            from_state=None,
+            to_state=None,
+            payload_hash=evidence_payload_hash,
+            reason=reason,
+            actor=actor,
+            recorded_at=now,
+            detail=json.dumps(
+                {"evidence_id": evidence_id, "reason": reason, "actor": actor}
+            ),
+        )
+
     def erase(self, candidate_id: str, *, reason: str, actor: str) -> None:
+        """Null the candidate payload and record the erasure.
+
+        This is the ledger half only; it does **not** touch the evidence
+        registry. Use `kgis.erasure.ErasureCoordinator.erase` to erase the
+        candidate and cascade to its evidence refs/content in one operation
+        (issue #61).
+        """
         if not self._profile.erasure_enabled:
             raise PermissionError("erasure not enabled for this consumer profile")
         row = self.row(candidate_id)
         if row is None:
             raise KeyError(f"no ledger entry for candidate_id {candidate_id!r}")
         try:
-            self._conn.execute(
-                "UPDATE ledger_entries SET payload_json = NULL, erased_at = ?, "
-                "erasure_reason = ? WHERE candidate_id = ?",
-                (_iso(self._now()), reason, candidate_id),
-            )
-            self._insert_transition(
-                candidate_id, row.processing_state, row.processing_state,
-                reason=f"erased: {reason}", actor=actor, kind="erase",
-            )
+            self._apply_erase(candidate_id, reason=reason, actor=actor)
         except Exception:
             self._conn.rollback()
             raise

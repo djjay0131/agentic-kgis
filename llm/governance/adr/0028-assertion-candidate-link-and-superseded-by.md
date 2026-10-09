@@ -1,7 +1,8 @@
 # ADR-0028: An assertion names its source candidates; a superseded assertion names its successor
 
-Status: Proposed
+Status: Accepted
 Date: 2026-10-08
+Accepted: 2026-10-09 by the owner (Jason Cusati) on PR #63 — "Option A sounds good. Move forward with this change." The recommended semantics below (plural set-like `source_candidate_ids`; `superseded_by` as a partial invariant; `mark_superseded(..., replaced_by=None)`) are adopted as written.
 Raised by: Issue #58 — the chain candidate → curation decision → canonical
 assertion cannot be joined from contracts alone; surfaced by the KGPS (PA-AKG)
 provenance audit, 2026-10-07 (agentic-kgps design spec §7 U3, tracking issue
@@ -104,7 +105,7 @@ superseded_by: str | None = None
    seed. The existing untyped `superseded_by` in KGCS's RETRACT payload gets a
    contract home and a canonical reader.
 
-### Recommended semantics (for the owner to confirm)
+### Semantics (adopted with Option A, 2026-10-09)
 
 - **Multiplicity.** `source_candidate_ids` is a tuple because a plan is
   batch-scoped (`CurationPlan.candidate_ids`) and a future merge or
@@ -123,8 +124,7 @@ superseded_by: str | None = None
     no single successor record — an identity merge, or the ADR-0021 backfill
     whose old→new id mapping is explicitly **non-injective** (two legacy rows
     can collapse to one). A strict biconditional would make those
-    unrepresentable. This is the one part of the decision the owner should
-    confirm, because it chooses which states are constructible.
+    unrepresentable. This chooses which states are constructible; adopted as written.
 - **Retrofit / compatibility.** Both fields default (`()` / `None`), so every
   existing construction site and every serialized record from before the
   change validates unchanged under `extra="forbid"`. Persistence is where the
@@ -135,7 +135,7 @@ superseded_by: str | None = None
 
 `GraphWriter.mark_superseded(assertion_id, at)` (`stores.py:245`) currently
 sets only `status` and `superseded_at`. To carry the pointer through that
-primitive, **recommended**: extend it to
+primitive, **decided**: extend it to
 `mark_superseded(assertion_id, at, replaced_by: str | None = None)` — the
 narrowest change, keeps retire-with-pointer atomic, and gives the pointer an
 indexable write. The alternative — have executors `put_assertion` a full

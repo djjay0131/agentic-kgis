@@ -36,6 +36,51 @@ def test_envelope_defaults():
     assert e.created_at.tzinfo is not None
 
 
+def test_contract_version_is_the_additive_minor_bump():
+    # ADR-0022/ADR-0023 add optional fields only; ADR candidate 0011 adds the
+    # optional `Evidence.span` (and the new `TextSpan`). The version policy
+    # makes each a backward-compatible minor bump.
+    assert CONTRACT_VERSION == "2.2.0"
+
+
+def test_source_version_is_optional_and_defaults_none():
+    assert COORDS.source_version is None
+    assert SourceCoordinates(
+        source_type="sqlite", locator="sqlite://players", fragment="id=1",
+        source_version="snap_42",
+    ).source_version == "snap_42"
+
+
+def test_source_coordinates_round_trip_including_source_version():
+    coords = SourceCoordinates(
+        source_type="sqlite", locator="sqlite://players@snapshot=snap_42",
+        fragment="id=1", source_version="snap_42",
+    )
+    restored = SourceCoordinates.model_validate_json(coords.model_dump_json())
+    assert restored == coords
+    assert restored.source_version == "snap_42"
+
+
+def test_model_and_extractor_version_fields_default_none_and_round_trip():
+    e = _envelope()
+    assert e.model_id is None
+    assert e.model_version is None
+    assert e.extractor_version is None
+    assert e.prompt_version is None
+
+    filled = _envelope(
+        model_id="claude-fake",
+        model_version="2026-08",
+        extractor_version="7",
+        prompt_version="p3",
+    )
+    restored = CandidateEnvelope.model_validate_json(filled.model_dump_json())
+    assert restored.model_id == "claude-fake"
+    assert restored.model_version == "2026-08"
+    assert restored.extractor_version == "7"
+    assert restored.prompt_version == "p3"
+
+
 def test_single_confidence_is_banned():
     with pytest.raises(ValidationError):
         _envelope(confidence=0.9)  # extra="forbid" makes this a hard error

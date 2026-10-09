@@ -198,6 +198,31 @@ def subset_arm(arm_id: str, n_entities: int, *, cost: CostLatency | None = None)
     return _assemble(ArmConfig(arm_id=arm_id, config={"n": n_entities}), parts, cost=cost)
 
 
+def relation_with_relationship(relationship: EvidenceRelationship) -> ArmOutput:
+    """One relation candidate citing PRESENT evidence of the given relationship.
+
+    Used to pin the grounding/verification split (issue #60) at the boundary:
+    `DERIVED_FROM` grounds but does not verify, `SUPPORTS` does both, and
+    `CONTRADICTS` and `CONTEXTUALIZES` ground nothing.
+    """
+    eid = f"ev-rel-{relationship.value}"
+    store = {eid: _evidence(eid, "games.csv#x", "played")}
+    cand = RelationCandidate(
+        graph_id="baseball",
+        producer="test",
+        producer_run_id="run-1",
+        ontology_version="1",
+        source_coordinates=_coords("games.csv#x"),
+        semantic_key="plays_for/x/y",
+        scores=_SCORES,
+        relation_type="PLAYS_FOR",
+        subject=EntityRef(entity_type="Player", namespace="usssa", key="x"),
+        object=EntityRef(entity_type="Team", namespace="usssa", key="y"),
+        evidence_refs=(EvidenceRef(evidence_id=eid, relationship=relationship),),
+    )
+    return _assemble(ArmConfig(arm_id=f"rel-{relationship.value}"), [(cand, store)])
+
+
 def hallucinating_arm() -> ArmOutput:
     parts: list[tuple[Candidate, dict[str, Evidence]]] = [entity(i) for i in range(1, 11)]
     # three invented players with no evidence at all -> false positives + unsupported

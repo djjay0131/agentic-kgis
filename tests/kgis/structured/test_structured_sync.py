@@ -84,6 +84,19 @@ def test_source_to_ledger_produces_candidates_through_the_sink(tmp_path) -> None
     ledger.close()
 
 
+def test_candidates_carry_the_snapshot_version_as_source_version(tmp_path) -> None:
+    """ADR-0022: the pinned snapshot version is first-class on each candidate's
+    `source_coordinates.source_version`, not only encoded in the locator."""
+    ledger = SqliteCandidateLedger(str(tmp_path / "ledger.db"))
+    config = _config(make_players_db())
+    expected = config.reader().snapshot_version
+    assert _pipeline(config, ledger).run().received == 9
+
+    candidates = [e.candidate for e in ledger.ledger_entries()]
+    assert {c.source_coordinates.source_version for c in candidates} == {expected}
+    ledger.close()
+
+
 def test_reingesting_the_same_snapshot_is_idempotent(tmp_path) -> None:
     path = str(tmp_path / "ledger.db")
     first = SqliteCandidateLedger(path)

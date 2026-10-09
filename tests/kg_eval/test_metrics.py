@@ -8,13 +8,35 @@ than a plausible-looking wrong number.
 from pathlib import Path
 
 import pytest
-from helpers import hallucinating_arm, lossy_arm, perfect_arm
+from helpers import (
+    hallucinating_arm,
+    lossy_arm,
+    perfect_arm,
+    relation_with_relationship,
+)
+from datetime import UTC, datetime
+
 from pydantic import ValidationError
 
+from kg_contracts.candidates import (
+    CandidateScores,
+    EntityCandidate,
+    SourceCoordinates,
+)
+from kg_contracts.evidence import (
+    EvidenceRef,
+    EvidenceRelationship,
+    Provenance,
+    TextSpan,
+    present_evidence,
+)
+from kg_contracts.identity import EntityRef
 from kg_eval import (
     ArmConfig,
     ArmOutput,
     BootstrapConfig,
+    EvidenceSpan,
+    GoldEntity,
     GoldSet,
     MetricValue,
     OntologySpec,
@@ -79,6 +101,40 @@ class TestHallucinatingArm:
         # 10 true of 13 produced — a measured value, not honest-null
         assert m.entity.precision.sufficient is True
         assert abs(m.entity.precision.value - 10 / 13) < 1e-9
+
+
+class TestEvidenceRelationshipSemantics:
+    """Grounding and verification are different claims (issue #60)."""
+
+    def test_derived_from_grounds_but_does_not_verify(self) -> None:
+        m = evaluate_extraction(
+            relation_with_relationship(EvidenceRelationship.DERIVED_FROM), gold()
+        )
+        assert m.unsupported_assertion_count == 0
+        assert m.unverified_assertion_count == 1
+
+    def test_supports_grounds_and_verifies(self) -> None:
+        m = evaluate_extraction(
+            relation_with_relationship(EvidenceRelationship.SUPPORTS), gold()
+        )
+        assert m.unsupported_assertion_count == 0
+        assert m.unverified_assertion_count == 0
+
+    def test_contradicts_grounds_nothing(self) -> None:
+        m = evaluate_extraction(
+            relation_with_relationship(EvidenceRelationship.CONTRADICTS), gold()
+        )
+        assert m.unsupported_assertion_count == 1
+        assert m.unverified_assertion_count == 1
+
+    def test_contextualizes_grounds_nothing(self) -> None:
+        # Context evidence situates a claim; it is not evidence for it, so it
+        # must not count as grounding (nor as verification).
+        m = evaluate_extraction(
+            relation_with_relationship(EvidenceRelationship.CONTEXTUALIZES), gold()
+        )
+        assert m.unsupported_assertion_count == 1
+        assert m.unverified_assertion_count == 1
 
 
 class TestHonestNull:
@@ -149,3 +205,98 @@ class TestArmOutputBounds:
         assert out.attempted is None
         m = evaluate_extraction(out, gold().model_copy(update={"attempted": None}))
         assert m.abstention_rate.value is None
+
+
+class TestSpanOverlap:
+    """The typed span-overlap metric: `Evidence.span` vs gold `EvidenceSpan` offsets."""
+
+    LOCATOR = "doc#chunk:0@chars:0-20"
+    _NOW = datetime(2026, 7, 12, tzinfo=UTC)
+
+    def _arm(
+        self, *, ev_start: int, ev_end: int, locator: str | None = None
+    ) -> ArmOutput:
+        locator = locator or self.LOCATOR
+        eid = "ev-span"
+        evidence = present_evidence(
+            evidence_id=eid,
+            source_type="document",
+            source_locator=locator,
+            observed_at=self._NOW,
+            provenance=Provenance(source="doc", actor="extractor"),
+            content="Ada is a shortstop",
+            span=TextSpan(start=ev_start, end=ev_end, quote="Ada is"),
+        )
+        candidate = EntityCandidate(
+            graph_id="g",
+            producer="p",
+            producer_run_id="r",
+            ontology_version="1",
+            source_coordinates=SourceCoordinates(source_type="document", locator=locator),
+            semantic_key="player/p1",
+            scores=CandidateScores(extraction_confidence=0.9, source_reliability=0.9),
+            entity_type="Player",
+            aliases=(EntityRef(entity_type="Player", namespace="usssa", key="p1"),),
+            evidence_refs=(
+                EvidenceRef(
+                    evidence_id=eid, relationship=EvidenceRelationship.DERIVED_FROM
+                ),
+            ),
+        )
+        return ArmOutput(
+            arm=ArmConfig(arm_id="span-arm"),
+            candidates=(candidate,),
+            evidence={eid: evidence},
+        )
+
+    def _gold(self, *, start: int | None = None, end: int | None = None) -> GoldSet:
+        return GoldSet(
+            gold_set_id="spans",
+            entities=(
+                GoldEntity(
+                    entity_type="Player",
+                    semantic_key="player/p1",
+                    evidence=EvidenceSpan(
+                        source_locator=self.LOCATOR,
+                        quote="Ada is",
+                        start=start,
+                        end=end,
+                    ),
+                ),
+            ),
+        )
+
+    def test_overlapping_span_scores_one(self) -> None:
+        m = evaluate_extraction(self._arm(ev_start=5, ev_end=11), self._gold(start=0, end=10))
+        assert m.evidence.span_overlap_rate.value == 1.0
+        assert m.evidence.spans_with_offsets == 1
+        assert m.evidence.spans_overlapping == 1
+
+    def test_disjoint_spans_score_zero(self) -> None:
+        m = evaluate_extraction(self._arm(ev_start=20, ev_end=30), self._gold(start=0, end=10))
+        assert m.evidence.span_overlap_rate.value == 0.0
+        assert m.evidence.spans_overlapping == 0
+
+    def test_touching_spans_do_not_overlap(self) -> None:
+        # Half-open: [10, 20) does not overlap [0, 10); the boundary is exclusive.
+        m = evaluate_extraction(self._arm(ev_start=10, ev_end=20), self._gold(start=0, end=10))
+        assert m.evidence.span_overlap_rate.value == 0.0
+
+    def test_locator_mismatch_does_not_overlap(self) -> None:
+        m = evaluate_extraction(
+            self._arm(ev_start=5, ev_end=10, locator="other#x"),
+            self._gold(start=0, end=10),
+        )
+        assert m.evidence.span_overlap_rate.value == 0.0
+
+    def test_gold_without_offsets_is_honest_null(self) -> None:
+        m = evaluate_extraction(self._arm(ev_start=5, ev_end=10), self._gold())
+        assert m.evidence.span_overlap_rate.value is None
+        assert m.evidence.span_overlap_rate.sufficient is False
+        assert "offsets" in (m.evidence.span_overlap_rate.note or "")
+        assert m.evidence.spans_with_offsets == 0
+
+    def test_shipped_fixture_has_no_offsets_so_metric_is_null(self) -> None:
+        # The baseball fixture names quotes but no character offsets.
+        m = evaluate_extraction(perfect_arm(), gold())
+        assert m.evidence.span_overlap_rate.value is None

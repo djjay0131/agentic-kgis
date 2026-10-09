@@ -25,7 +25,7 @@ class SqliteAuditStream:
         self,
         *,
         candidate_id: str,
-        transition_id: int,
+        transition_id: int | None,
         kind: str,
         from_state: str | None,
         to_state: str | None,
