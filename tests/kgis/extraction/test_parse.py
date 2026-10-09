@@ -59,3 +59,63 @@ def test_out_of_range_confidence_raises() -> None:
 
 def test_empty_items_yields_no_items() -> None:
     assert JsonItemsParser().parse('{"items": []}') == []
+
+
+class TestQuote:
+    """Per-item quotes are verified against the chunk; paraphrases are dropped."""
+
+    CHUNK = "Ada is a shortstop known for hitting."
+    OFFSET = 100
+
+    def test_verified_quote_is_lifted_with_document_offsets(self) -> None:
+        items = JsonItemsParser().parse(
+            '{"items": [{"player_id": "ada", "quote": "shortstop"}]}',
+            chunk_text=self.CHUNK,
+            chunk_start=self.OFFSET,
+        )
+        item = items[0]
+        assert item.quote == "shortstop"
+        assert item.quote_start == self.OFFSET + self.CHUNK.index("shortstop")
+        assert item.quote_end == item.quote_start + len("shortstop")
+        assert self.CHUNK[item.quote_start - self.OFFSET:item.quote_end - self.OFFSET] == "shortstop"
+        assert "quote" not in item.values
+        assert item.warnings == ()
+
+    def test_non_substring_quote_is_dropped_with_a_warning(self) -> None:
+        items = JsonItemsParser().parse(
+            '{"items": [{"player_id": "ada", "quote": "a pitcher"}]}',
+            chunk_text=self.CHUNK,
+        )
+        item = items[0]
+        assert item.quote is None
+        assert item.quote_start is None and item.quote_end is None
+        assert any("not an exact substring" in w for w in item.warnings)
+        assert "quote" not in item.values  # never leaks into the candidate values
+
+    def test_non_string_quote_is_dropped_with_a_warning(self) -> None:
+        items = JsonItemsParser().parse(
+            '{"items": [{"x": 1, "quote": 5}]}', chunk_text=self.CHUNK
+        )
+        assert items[0].quote is None
+        assert any("must be a string" in w for w in items[0].warnings)
+
+    def test_empty_quote_is_dropped_with_a_warning(self) -> None:
+        items = JsonItemsParser().parse(
+            '{"items": [{"x": 1, "quote": ""}]}', chunk_text=self.CHUNK
+        )
+        assert items[0].quote is None
+        assert any("empty" in w for w in items[0].warnings)
+
+    def test_quote_without_chunk_text_is_dropped_not_assumed(self) -> None:
+        # No chunk text supplied: nothing can be verified, so the quote is
+        # dropped rather than trusted (never store an unverified quote).
+        items = JsonItemsParser().parse('{"items": [{"x": 1, "quote": "shortstop"}]}')
+        assert items[0].quote is None
+        assert items[0].warnings
+
+    def test_verification_uses_the_first_occurrence(self) -> None:
+        text = "Yes yes yes"
+        items = JsonItemsParser().parse(
+            '{"items": [{"x": 1, "quote": "yes"}]}', chunk_text=text
+        )
+        assert items[0].quote_start == 4  # deterministic, first occurrence

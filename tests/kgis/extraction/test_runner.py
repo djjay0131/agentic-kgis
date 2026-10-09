@@ -22,6 +22,7 @@ from kgis.ledger.store import SqliteCandidateLedger
 
 from .support import (
     ConcurrencyProbeModel,
+    SAMPLE_DOC,
     ScriptedModel,
     broken_config,
     fixed_clock,
@@ -314,3 +315,70 @@ def _plays_for_builder() -> object:
 def test_entity_candidate_builder_import_is_used() -> None:
     # Guard: the player/skill configs use EntityCandidateBuilder.
     assert isinstance(player_config().builder, EntityCandidateBuilder)
+
+
+def _quoted_client(quote: str) -> ScriptedModel:
+    response = (
+        '{"items": [{"player_id": "ada", "name": "Ada", '
+        f'"quote": "{quote}"' + "}]}"
+    )
+    return ScriptedModel({("Player", "Ada"): response})
+
+
+def test_verified_quote_writes_span_evidence_and_cites_it() -> None:
+    ledger = SqliteCandidateLedger(":memory:")
+    registry = SqliteEvidenceRegistry(":memory:")
+    report = _pipeline(
+        client=_quoted_client("Ada is a shortstop"),
+        sink=ledger,
+        registry=registry,
+        extractors=[player_config()],
+    ).run()
+
+    entry = next(
+        e
+        for e in ledger.ledger_entries()
+        if e.candidate.semantic_key == "player/baseball/ada"
+    )
+    # Chunk evidence + narrowed quote evidence.
+    assert len(entry.candidate.evidence_refs) == 2
+    resolved = registry.resolve(entry.candidate.candidate_id)
+    assert len(resolved) == 2
+
+    quote_evidence = next(
+        e for e in resolved if e.span is not None and e.span.quote == "Ada is a shortstop"
+    )
+    assert SAMPLE_DOC.text[quote_evidence.span.start:quote_evidence.span.end] == "Ada is a shortstop"
+    # Every evidence span resolves to its text.
+    for evidence in resolved:
+        assert evidence.span is not None
+        assert SAMPLE_DOC.text[evidence.span.start:evidence.span.end]
+    assert not any(w.code == "quote_not_verified" for w in report.warnings)
+
+
+def test_rejected_quote_is_dropped_and_reported_as_a_warning() -> None:
+    ledger = SqliteCandidateLedger(":memory:")
+    registry = SqliteEvidenceRegistry(":memory:")
+    report = _pipeline(
+        client=_quoted_client("Ada is a pitcher"),  # not in the chunk
+        sink=ledger,
+        registry=registry,
+        extractors=[player_config()],
+    ).run()
+
+    entry = next(
+        e
+        for e in ledger.ledger_entries()
+        if e.candidate.semantic_key == "player/baseball/ada"
+    )
+    # Only the chunk evidence remains; the paraphrase was not stored.
+    assert len(entry.candidate.evidence_refs) == 1
+    resolved = registry.resolve(entry.candidate.candidate_id)
+    assert len(resolved) == 1
+    assert all(e.span is None or e.span.quote != "Ada is a pitcher" for e in resolved)
+    warnings = [w for w in report.warnings if w.code == "quote_not_verified"]
+    assert len(warnings) == 1
+    assert "not an exact substring" in warnings[0].message
+    # The warning is not fatal: the candidate was still built and submitted.
+    assert report.candidates_submitted == 1
+    assert not report.incomplete

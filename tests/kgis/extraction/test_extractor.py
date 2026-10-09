@@ -103,3 +103,43 @@ def test_empty_model_output_yields_no_candidates() -> None:
         _player_chunk(), _context(config.producer("kgis.extraction"), config.scoring)
     )
     assert candidates == []
+
+
+def _quoted_script(quote: str) -> ScriptedModel:
+    return ScriptedModel(
+        {
+            ("Player", "Ada"): (
+                '{"items": [{"player_id": "ada", "name": "Ada", '
+                f'"quote": "{quote}"' + "}]}"
+            )
+        }
+    )
+
+
+def test_extract_result_carries_span_evidence_for_a_verified_quote() -> None:
+    config = player_config()
+    extractor = LLMExtractor(config, _quoted_script("Ada is a shortstop"))
+    result = extractor.extract_result(
+        _player_chunk(), _context(config.producer("kgis.extraction"), config.scoring)
+    )
+    assert len(result.candidates) == 1
+    extracted = result.candidates[0]
+    assert len(extracted.evidence) == 1
+    evidence = extracted.evidence[0]
+    assert evidence.span is not None
+    assert evidence.span.quote == "Ada is a shortstop"
+    # The candidate already cites the narrowed evidence.
+    cited_ids = {ref.evidence_id for ref in extracted.candidate.evidence_refs}
+    assert evidence.evidence_id in cited_ids
+    assert result.warnings == ()
+
+
+def test_extract_result_carries_no_evidence_for_a_rejected_quote() -> None:
+    config = player_config()
+    extractor = LLMExtractor(config, _quoted_script("Ada is a pitcher"))
+    result = extractor.extract_result(
+        _player_chunk(), _context(config.producer("kgis.extraction"), config.scoring)
+    )
+    assert result.candidates[0].evidence == ()
+    assert result.candidates[0].candidate.evidence_refs == ()
+    assert any("not an exact substring" in w for w in result.warnings)

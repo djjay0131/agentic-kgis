@@ -35,7 +35,11 @@ from kgis.extraction.documents import (
     ParagraphChunker,
     WholeDocumentChunker,
 )
-from kgis.extraction.extractor import LLMExtractor
+from kgis.extraction.extractor import (
+    ExtractedCandidate,
+    ExtractionResult,
+    LLMExtractor,
+)
 from kgis.extraction.parse import (
     ExtractedItem,
     ExtractionParseError,
@@ -46,9 +50,12 @@ from kgis.extraction.provenance import (
     build_chunk_evidence,
     build_document_artifact,
     build_document_evidence,
+    build_quote_evidence,
     chunk_evidence_id,
     chunk_evidence_ref,
     document_evidence_id,
+    quote_evidence_id,
+    quote_evidence_ref,
 )
 from kgis.extraction.runner import (
     DEFAULT_CONCURRENCY,
@@ -65,9 +72,11 @@ __all__ = [
     "CompletionClient",
     "Document",
     "DocumentSource",
+    "ExtractedCandidate",
     "ExtractedItem",
     "ExtractionParseError",
     "ExtractionPipeline",
+    "ExtractionResult",
     "ExtractorConfig",
     "FixedWindowChunker",
     "IterableDocumentSource",
@@ -83,9 +92,12 @@ __all__ = [
     "build_chunk_evidence",
     "build_document_artifact",
     "build_document_evidence",
+    "build_quote_evidence",
     "chunk_evidence_id",
     "chunk_evidence_ref",
     "document_evidence_id",
     "is_deterministic",
+    "quote_evidence_id",
+    "quote_evidence_ref",
     "request_key",
 ]
