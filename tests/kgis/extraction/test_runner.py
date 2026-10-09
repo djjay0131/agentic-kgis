@@ -8,6 +8,7 @@ client (or a scripted fake standing in for a live model).
 from __future__ import annotations
 
 from kgis.builders import EntityCandidateBuilder, SourceScoring
+from kgis.erasure import ErasureCoordinator
 from kgis.evidence.store import SqliteEvidenceRegistry
 from kgis.extraction.client import RecordingCompletionClient, ReplayCompletionClient
 from kgis.extraction.config import ExtractorConfig
@@ -18,6 +19,7 @@ from kgis.extraction.documents import (
     ParagraphChunker,
 )
 from kgis.extraction.runner import ExtractionPipeline
+from kgis.ledger.config import BASEBALL_AI_PROFILE
 from kgis.ledger.store import SqliteCandidateLedger
 
 from .support import (
@@ -382,3 +384,58 @@ def test_rejected_quote_is_dropped_and_reported_as_a_warning() -> None:
     # The warning is not fatal: the candidate was still built and submitted.
     assert report.candidates_submitted == 1
     assert not report.incomplete
+
+
+def test_erasure_clears_quote_text_but_keeps_span_offsets() -> None:
+    """Redaction must remove verbatim quote text from `span.quote`, not only
+    `content`, and re-extraction must not restore it (issue #67 review finding 1).
+    """
+    ledger = SqliteCandidateLedger(":memory:", profile=BASEBALL_AI_PROFILE)
+    registry = SqliteEvidenceRegistry(":memory:")
+    pipeline = _pipeline(
+        client=_quoted_client("Ada is a shortstop"),
+        sink=ledger,
+        registry=registry,
+        extractors=[player_config()],
+    )
+    pipeline.run()
+
+    entry = next(
+        e
+        for e in ledger.ledger_entries()
+        if e.candidate.semantic_key == "player/baseball/ada"
+    )
+    candidate_id = entry.candidate.candidate_id
+    resolved = registry.resolve(candidate_id)
+    quote_evidence = next(
+        e for e in resolved if e.span is not None and e.span.quote == "Ada is a shortstop"
+    )
+    quote_id = quote_evidence.evidence_id
+    chunk_evidence_id = next(
+        e.evidence_id for e in resolved if e.evidence_id != quote_id
+    )
+    span_offsets = (quote_evidence.span.start, quote_evidence.span.end)
+
+    ErasureCoordinator(ledger, registry).erase(
+        candidate_id, reason="gdpr", actor="dpo"
+    )
+
+    stored_quote = registry.get(quote_id)
+    assert stored_quote is not None
+    assert stored_quote.content is None                      # passage text gone
+    assert stored_quote.span is not None
+    assert stored_quote.span.quote is None                   # verbatim quote gone
+    assert (stored_quote.span.start, stored_quote.span.end) == span_offsets  # offsets kept
+    assert registry.get(chunk_evidence_id).content is None
+    marker_before = registry.redaction(quote_id)
+    assert marker_before is not None and marker_before[0] is not None
+
+    # Re-extraction re-collects the same deterministic evidence id; redaction is
+    # terminal, so the cleared quote text is never restored.
+    pipeline.run()
+
+    after = registry.get(quote_id)
+    assert after is not None
+    assert after.content is None
+    assert after.span is not None and after.span.quote is None
+    assert registry.redaction(quote_id) == marker_before
