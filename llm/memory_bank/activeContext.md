@@ -1,5 +1,38 @@
 # Active Context — agentic-kgis
 
+Update 2026-10-09: **typed character spans on evidence, and verified per-item
+quotes from extraction** (issue #56, ADR candidate 0011; `CONTRACT_VERSION`
+`2.1.0 -> 2.2.0`). Span provenance was chunk-level and string-encoded: the
+fragment `chunk:{i}@chars:{s}-{e}` lived only inside `Evidence.source_locator`,
+and the item parser kept no quote, so KGPS had to regex-parse the locator and
+could cite only whole paragraphs.
+
+`kg_contracts.evidence.TextSpan(start, end, quote=None)` (frozen, `start <= end`
+validated, non-negative offsets) is added, with `Evidence.span: TextSpan | None = None`
+and an optional `span` on `present_evidence`. `[start, end)` are **document**
+offsets, so `document.text[start:end]` is the spanned text. Purely additive: the
+legacy `source_locator` string is unchanged, and the registry needs no schema
+change (it already round-trips the full `evidence_json`).
+
+Extraction now sets `span=TextSpan(chunk.start, chunk.end)` on every chunk
+evidence, so `document.text[start:end] == chunk.text`. `JsonItemsParser` lifts
+an optional per-item `"quote"`, **verifies it is an exact substring of the
+chunk**, and computes document offsets; a non-substring (or non-string/empty)
+quote is dropped with a warning — a paraphrase is never stored as a quote.
+`IngestionReport` surfaces drops as `code="quote_not_verified"`.
+
+A verified quote yields a second, span-narrowed `Evidence` (deterministic id
+keyed on chunk coordinates **and** span offsets plus extractor/model/prompt
+versions) cited from the candidate **in addition to** the chunk evidence. Both
+are `DERIVED_FROM`: KGIS records where a claim came from; whether a quote
+verifies it is KGCS/KGPS's call (ADR candidate 0011). The `LLMExtractor` returns
+the narrowed evidence alongside the candidate (`ExtractionResult` /
+`ExtractedCandidate`); the runner — the single-threaded reduce point and only
+registry writer — persists it. `kg_eval` gains a `span_overlap_rate` metric over
+matched gold `EvidenceSpan.start/end` (honest-null when the gold set carries no
+offsets). 872 passed, ruff clean, `mypy --strict` clean (79 files). After merge,
+KGPS can drop `src/kgps/spans.py` string parsing (agentic-kgps#1).
+
 Update 2026-10-08 (review round): **U8 erasure cascade hardened against
 re-ingestion and idempotency gaps** (PR #65 review findings; no version change).
 Four findings on the erasure cascade, all addressed:
