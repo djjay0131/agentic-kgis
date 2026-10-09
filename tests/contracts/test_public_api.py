@@ -22,7 +22,7 @@ def test_top_level_exports() -> None:
         candidate_adapter,
         # assertions (T11)
         Assertion, CanonicalEntity, ConflictRecord, ConflictStatus,
-        CurationStatus,
+        CurationStatus, is_assertion_id,
         # policy (T12)
         AdjudicationRoute, ConfidencePolicy, IdentityDisposition,
         # stores (T13, T15; ledger read surface ADR-0011)

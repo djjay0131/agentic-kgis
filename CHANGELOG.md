@@ -4,6 +4,27 @@ All notable changes to `agentic-kgis` (and the `kg_contracts` / `kg_eval`
 packages it ships). Versions follow semver; `kg_contracts.CONTRACT_VERSION`
 is versioned separately and noted per release.
 
+## Unreleased
+
+`kg_contracts` CONTRACT_VERSION: **2.2.0 → 2.3.0** (additive, backward
+compatible). Consumers validating contract versions exactly should accept
+compatible minors (agentic-kgcs ADR-0024).
+
+### Added
+- **Assertion lineage pointers (ADR-0028; #58, KGIS half).**
+  `Assertion.source_candidate_ids: tuple[str, ...] = ()` names the candidate(s)
+  a record was planned from; `Assertion.superseded_by: str | None = None` names
+  the record that replaced it. Both are read-only provenance metadata outside
+  the ADR-0021 record seed, so they never re-mint a record id and old serialized
+  assertions validate unchanged. `superseded_by` is a partial invariant: when
+  set, `status` must be `SUPERSEDED`, `superseded_at` must be set, and the id
+  must be well-formed (`is_assertion_id`); a `SUPERSEDED` record may still carry
+  `superseded_by = None`. `GraphWriter.mark_superseded(assertion_id, at,
+  replaced_by=None)` (and `MemoryGraphStore`) carry the pointer through the
+  atomic retire primitive; `GraphMutationStoreContract` pins the round trip and
+  the memory store's id index stays in lockstep. Companion KGCS planner/evolution
+  change tracked separately.
+
 ## 0.5.0 — 2026-10-09
 
 First tagged release (`v0.5.0`). 0.4.0 was intentionally skipped: the owner

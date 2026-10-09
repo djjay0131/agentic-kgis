@@ -9,6 +9,7 @@ from kg_contracts.assertions import (
     ConflictRecord,
     ConflictStatus,
     CurationStatus,
+    is_assertion_id,
 )
 from kg_contracts.candidates import CandidateScores
 from kg_contracts.evidence import EvidenceRef, EvidenceRelationship, Provenance, ValidPeriod
@@ -211,3 +212,110 @@ def test_conflict_preferred_not_in_assertion_ids_is_rejected():
             resolution_policy=None,
             status=ConflictStatus.RESOLVED,
         )
+
+
+# --- ADR-0028: source_candidate_ids + superseded_by --------------------------
+
+_VALID_ASSERTION_ID = "as_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+
+
+def _lineage_kwargs(**overrides: object) -> dict:
+    kwargs: dict = dict(
+        subject_identity=new_identity_id("baseball"),
+        predicate="height_cm",
+        object_value=200,
+        object_identity=None,
+        status=CurationStatus.ACTIVE,
+        valid_period=ValidPeriod(),
+        recorded_at=NOW,
+        scores=SCORES,
+        evidence_refs=(),
+        authority="usssa",
+        provenance=PROV,
+        curation_epoch=1,
+        trace_id="trace_test",
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_is_assertion_id_accepts_well_formed_and_rejects_the_rest():
+    assert is_assertion_id(_VALID_ASSERTION_ID)
+    assert is_assertion_id("as_" + "0" * 26)
+    assert not is_assertion_id("as_short")
+    assert not is_assertion_id("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    assert not is_assertion_id("as_01ARZ3NDEKTSV4RRFFQ69G5FA")  # 25 chars
+    # Crockford excludes I, L, O and U.
+    assert not is_assertion_id("as_01ARZ3NDEKTSV4RRFFQ69G5FAI")
+
+
+def test_source_candidate_ids_default_is_empty_and_order_is_preserved():
+    default = Assertion(**_lineage_kwargs())
+    assert default.source_candidate_ids == ()
+    ordered = Assertion(**_lineage_kwargs(source_candidate_ids=("cand_b", "cand_a")))
+    assert ordered.source_candidate_ids == ("cand_b", "cand_a")
+
+
+def test_source_candidate_ids_duplicates_are_rejected():
+    with pytest.raises(ValidationError, match="duplicate"):
+        Assertion(**_lineage_kwargs(source_candidate_ids=("cand_a", "cand_a")))
+
+
+def test_superseded_by_is_allowed_with_superseded_status_and_timestamp():
+    record = Assertion(
+        **_lineage_kwargs(
+            status=CurationStatus.SUPERSEDED,
+            superseded_at=NOW,
+            superseded_by=_VALID_ASSERTION_ID,
+        )
+    )
+    assert record.superseded_by == _VALID_ASSERTION_ID
+
+
+def test_superseded_status_without_superseded_by_is_the_honest_null():
+    # ADR-0028: the invariant is partial, not a biconditional — a retirement
+    # with no single successor (a merge, the non-injective re-id backfill)
+    # must stay representable.
+    record = Assertion(
+        **_lineage_kwargs(status=CurationStatus.SUPERSEDED, superseded_at=NOW)
+    )
+    assert record.superseded_by is None
+
+
+def test_superseded_by_requires_superseded_status():
+    with pytest.raises(ValidationError, match="SUPERSEDED"):
+        Assertion(**_lineage_kwargs(superseded_by=_VALID_ASSERTION_ID))
+
+
+def test_superseded_by_requires_superseded_at():
+    with pytest.raises(ValidationError, match="superseded_at"):
+        Assertion(
+            **_lineage_kwargs(
+                status=CurationStatus.SUPERSEDED,
+                superseded_at=None,
+                superseded_by=_VALID_ASSERTION_ID,
+            )
+        )
+
+
+def test_superseded_by_requires_well_formed_assertion_id():
+    with pytest.raises(ValidationError, match="valid assertion id"):
+        Assertion(
+            **_lineage_kwargs(
+                status=CurationStatus.SUPERSEDED,
+                superseded_at=NOW,
+                superseded_by="not-an-assertion-id",
+            )
+        )
+
+
+def test_old_serialized_assertion_without_lineage_fields_still_validates():
+    # ADR-0028: both fields default, so a record serialized before the change
+    # validates unchanged under `extra="forbid"`.
+    payload = _lineage_kwargs()
+    assert "source_candidate_ids" not in payload
+    assert "superseded_by" not in payload
+    record = Assertion.model_validate(payload)
+    assert record.source_candidate_ids == ()
+    assert record.superseded_by is None
+

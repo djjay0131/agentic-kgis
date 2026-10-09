@@ -22,7 +22,12 @@ entry point.
 from datetime import datetime
 from typing import Sequence
 
-from kg_contracts.assertions import Assertion, CanonicalEntity, CurationStatus
+from kg_contracts.assertions import (
+    Assertion,
+    CanonicalEntity,
+    CurationStatus,
+    is_assertion_id,
+)
 from kg_contracts.candidates import Candidate
 from kg_contracts.curation import CurationOperationType, Precondition, ProcessingState
 from kg_contracts.identity import EntityRef
@@ -182,13 +187,28 @@ class MemoryGraphStore:
         self._assertions.setdefault(assertion.subject_identity, []).append(assertion)
         self._assertions_by_id[assertion.assertion_id] = assertion
 
-    def mark_superseded(self, assertion_id: str, at: datetime) -> None:
+    def mark_superseded(
+        self, assertion_id: str, at: datetime, replaced_by: str | None = None
+    ) -> None:
+        # ADR-0028: the pointer rides the same atomic retire primitive. A
+        # malformed `replaced_by` is rejected here rather than stored, since
+        # `model_copy` (used below, matching the pre-ADR code) does not
+        # re-run the model validator.
+        if replaced_by is not None and not is_assertion_id(replaced_by):
+            raise ValueError(f"replaced_by is not a valid assertion id: {replaced_by!r}")
         for subject_assertions in self._assertions.values():
             for index, assertion in enumerate(subject_assertions):
                 if assertion.assertion_id == assertion_id:
-                    updated = assertion.model_copy(
-                        update={"status": CurationStatus.SUPERSEDED, "superseded_at": at}
-                    )
+                    update: dict[str, object] = {
+                        "status": CurationStatus.SUPERSEDED,
+                        "superseded_at": at,
+                    }
+                    # `replaced_by=None` is the honest null (a retirement with
+                    # no single successor): leave any existing pointer as-is
+                    # rather than silently clearing it.
+                    if replaced_by is not None:
+                        update["superseded_by"] = replaced_by
+                    updated = assertion.model_copy(update=update)
                     subject_assertions[index] = updated
                     # Keep the id index pointing at the same (replaced) object
                     # so `get_assertion` never serves a stale copy.

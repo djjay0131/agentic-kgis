@@ -32,6 +32,7 @@ evidence, and their valid periods survive; only `preferred_assertion_id`
 and `status` record the current resolution.
 """
 
+import re
 from datetime import datetime
 from enum import StrEnum
 
@@ -47,6 +48,18 @@ from kg_contracts.identity import (
     check_aliases_match_entity_type,
     is_identity_id,
 )
+
+# An assertion id is the `as_` prefix followed by a 26-char Crockford-base32
+# ULID (the same alphabet `_ulid.new_ulid` emits: no I, L, O or U). This is
+# the counterpart to `identity.is_identity_id` that ADR-0028 flagged as
+# missing; `Assertion.superseded_by` is the first field that must name a
+# well-formed assertion id.
+_ASSERTION_ID_RE = re.compile(r"as_[0-9A-HJKMNP-TV-Z]{26}")
+
+
+def is_assertion_id(value: str) -> bool:
+    """Return True iff `value` is a well-formed assertion id (`as_` + ULID)."""
+    return bool(_ASSERTION_ID_RE.fullmatch(value))
 
 
 class CurationStatus(StrEnum):
@@ -103,6 +116,21 @@ class Assertion(BaseModel):
     copy with `superseded_at` set, performed by KGCS executors (Plan 3), not
     by this contract. Append-only immutability of records at rest is the
     ledger/store layer's responsibility (Plan 2/3), not this model's.
+
+    Two lineage pointers (ADR-0028) are carried as read-only provenance
+    metadata, deliberately **outside** the ADR-0021 record seed so adding or
+    changing either never re-mints a record id:
+
+    - `source_candidate_ids` names the candidate(s) this record was planned
+      from. It is a set-like list: order is the caller's deterministic
+      (first-seen) order, duplicates are rejected, and an empty tuple is the
+      honest null for a record with no candidate origin (an evolved record).
+    - `superseded_by` names the record that replaced this one. It is a
+      **partial** invariant: when set, `status` must be `SUPERSEDED`,
+      `superseded_at` must be set, and the id must be well-formed. The
+      converse is deliberately not required — a `SUPERSEDED` record may carry
+      `superseded_by = None` for retirements with no single successor (an
+      identity merge, or the non-injective ADR-0021 re-id backfill).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -123,6 +151,8 @@ class Assertion(BaseModel):
     derivation: Derivation | None = None
     curation_epoch: int
     trace_id: str
+    source_candidate_ids: tuple[str, ...] = ()
+    superseded_by: str | None = None
 
     @model_validator(mode="after")
     def _check_subject_and_object(self) -> "Assertion":
@@ -143,6 +173,27 @@ class Assertion(BaseModel):
             raise ValueError(
                 f"object_identity is not a valid identity id: {self.object_identity!r}"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _check_lineage_pointers(self) -> "Assertion":
+        seen: set[str] = set()
+        for candidate_id in self.source_candidate_ids:
+            if candidate_id in seen:
+                raise ValueError(f"source_candidate_ids contains a duplicate: {candidate_id!r}")
+            seen.add(candidate_id)
+        if self.superseded_by is not None:
+            if self.status is not CurationStatus.SUPERSEDED:
+                raise ValueError(
+                    "superseded_by is set, so status must be SUPERSEDED "
+                    f"(got {self.status!r})"
+                )
+            if self.superseded_at is None:
+                raise ValueError("superseded_by is set, so superseded_at must be set")
+            if not is_assertion_id(self.superseded_by):
+                raise ValueError(
+                    f"superseded_by is not a valid assertion id: {self.superseded_by!r}"
+                )
         return self
 
 
