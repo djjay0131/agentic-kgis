@@ -164,6 +164,7 @@ def _arm_section(arm_result: ArmResult) -> list[str]:
         f"- Ontology violations: {_fmt_int(m.ontology_violations)}",
         f"- Hallucinations (false positives): {m.hallucination_count}",
         f"- Unsupported assertions: {m.unsupported_assertion_count}",
+        f"- Unverified assertions: {m.unverified_assertion_count}",
         f"- Abstention rate: {_fmt_metric(m.abstention_rate)}",
         f"- Failure rate: {_fmt_metric(m.failure_rate)}",
         f"- Cost/latency: {_fmt_cost(m.cost)}",

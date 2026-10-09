@@ -8,9 +8,15 @@ than a plausible-looking wrong number.
 from pathlib import Path
 
 import pytest
-from helpers import hallucinating_arm, lossy_arm, perfect_arm
+from helpers import (
+    hallucinating_arm,
+    lossy_arm,
+    perfect_arm,
+    relation_with_relationship,
+)
 from pydantic import ValidationError
 
+from kg_contracts.evidence import EvidenceRelationship
 from kg_eval import (
     ArmConfig,
     ArmOutput,
@@ -79,6 +85,40 @@ class TestHallucinatingArm:
         # 10 true of 13 produced — a measured value, not honest-null
         assert m.entity.precision.sufficient is True
         assert abs(m.entity.precision.value - 10 / 13) < 1e-9
+
+
+class TestEvidenceRelationshipSemantics:
+    """Grounding and verification are different claims (issue #60)."""
+
+    def test_derived_from_grounds_but_does_not_verify(self) -> None:
+        m = evaluate_extraction(
+            relation_with_relationship(EvidenceRelationship.DERIVED_FROM), gold()
+        )
+        assert m.unsupported_assertion_count == 0
+        assert m.unverified_assertion_count == 1
+
+    def test_supports_grounds_and_verifies(self) -> None:
+        m = evaluate_extraction(
+            relation_with_relationship(EvidenceRelationship.SUPPORTS), gold()
+        )
+        assert m.unsupported_assertion_count == 0
+        assert m.unverified_assertion_count == 0
+
+    def test_contradicts_grounds_nothing(self) -> None:
+        m = evaluate_extraction(
+            relation_with_relationship(EvidenceRelationship.CONTRADICTS), gold()
+        )
+        assert m.unsupported_assertion_count == 1
+        assert m.unverified_assertion_count == 1
+
+    def test_contextualizes_grounds_nothing(self) -> None:
+        # Context evidence situates a claim; it is not evidence for it, so it
+        # must not count as grounding (nor as verification).
+        m = evaluate_extraction(
+            relation_with_relationship(EvidenceRelationship.CONTEXTUALIZES), gold()
+        )
+        assert m.unsupported_assertion_count == 1
+        assert m.unverified_assertion_count == 1
 
 
 class TestHonestNull:

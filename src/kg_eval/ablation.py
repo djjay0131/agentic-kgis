@@ -8,7 +8,8 @@ the label IMPROVEMENT only when three things hold at once —
 2. the paired bootstrap confidence interval of the per-item difference
    excludes 0 from below (the improvement is not a coin flip); and
 3. no guardrail regresses — it did not buy recall by hallucinating more,
-   leaving more assertions unsupported, or (when measured) costing more.
+   leaving more assertions ungrounded (no PRESENT `SUPPORTS` or `DERIVED_FROM`
+   evidence), or (when measured) costing more.
 
 If the interval straddles 0, the verdict is NO_IMPROVEMENT: "the LLM did not
 help" is a real, publishable result, not a bug. If the metric or the interval
@@ -93,14 +94,21 @@ class AblationResult(BaseModel):
 def _guardrail_concerns(baseline: ExtractionMetrics, enhanced: ExtractionMetrics) -> list[str]:
     """List guardrails the enhanced arm worsened (ADR-0009 honest-null clause).
 
-    An improvement bought by more hallucinations, more unsupported assertions,
-    or (when both measured) more cost/latency is not a default-worthy win.
+    An improvement bought by more hallucinations, more ungrounded assertions, or
+    (when both measured) more cost/latency is not a default-worthy win.
+
+    The unsupported-assertion guardrail counts *ungrounded* assertions: those
+    citing no PRESENT `SUPPORTS` or `DERIVED_FROM` evidence (issue #60's split;
+    `CONTRADICTS` and `CONTEXTUALIZES` do not ground). It deliberately does not
+    consider `unverified_assertion_count` — a grounded-but-unverified run (only
+    `DERIVED_FROM` refs) is a real state that this gate currently permits. See
+    the open question in the PR: whether verification should also gate.
 
     Known limitation: the cost and latency guardrails only fire when *both*
     arms report the value. An enhanced arm that stops measuring cost/latency
     (`cost=None`, or a `CostLatency` field left `None`) therefore escapes the
     cost/latency check entirely — the comparison is skipped rather than treated
-    as a regression. Hallucination and unsupported-assertion guardrails have no
+    as a regression. Hallucination and ungrounded-assertion guardrails have no
     such gap; they are always measurable from the candidates. A future revision
     could treat "stopped measuring a previously-measured cost" as a concern in
     its own right; today it does not.
@@ -112,7 +120,7 @@ def _guardrail_concerns(baseline: ExtractionMetrics, enhanced: ExtractionMetrics
         )
     if enhanced.unsupported_assertion_count > baseline.unsupported_assertion_count:
         concerns.append(
-            "unsupported assertions rose "
+            "ungrounded assertions rose "
             f"{baseline.unsupported_assertion_count}->{enhanced.unsupported_assertion_count}"
         )
     b_cost, e_cost = baseline.cost, enhanced.cost
