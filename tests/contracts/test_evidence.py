@@ -120,6 +120,17 @@ def test_provenance_rejects_unknown_field():
         Provenance(source="s", actor="a", bogus=1)  # type: ignore[call-arg]
 
 
+def test_provenance_model_version_is_optional_and_round_trips():
+    assert PROV.model_version is None
+    full = Provenance(
+        source="s", actor="a", model="claude-fake", model_version="2026-08",
+        prompt_version="p3",
+    )
+    restored = Provenance.model_validate_json(full.model_dump_json())
+    assert restored == full
+    assert restored.model_version == "2026-08"
+
+
 def test_constructor_helpers_and_deterministic_ids():
     from kg_contracts.evidence import absent_evidence, present_evidence
 

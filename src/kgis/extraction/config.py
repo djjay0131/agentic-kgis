@@ -77,7 +77,8 @@ class ExtractorConfig:
         """The `producer` string stamped on this extractor's candidates.
 
         Encodes the extractor id and version alongside the base producer
-        (`kgis.extraction:player@2`) so the candidate itself names which
-        extractor made it — the envelope has no dedicated field for it (see
-        ADR-0023)."""
+        (`kgis.extraction:player@2`). Kept for compatibility now that
+        ADR-0023 gives the envelope dedicated `model_id`/`model_version`/
+        `extractor_version`/`prompt_version` fields; a consumer that parses
+        this string still works, but no longer has to."""
         return f"{base}:{self.extractor_id}@{self.extractor_version}"

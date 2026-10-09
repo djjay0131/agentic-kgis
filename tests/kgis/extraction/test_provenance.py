@@ -39,6 +39,7 @@ def test_chunk_evidence_is_present_with_provenance() -> None:
     evidence = build_chunk_evidence(chunk, config, observed_at=NOW)
     assert evidence.availability is EvidenceAvailability.PRESENT
     assert evidence.provenance.model == "claude-fake"
+    assert evidence.provenance.model_version == "2026-08"
     assert evidence.provenance.actor == "player"
     assert evidence.provenance.prompt_version == "p1"
     assert evidence.payload_hash == chunk.content_hash

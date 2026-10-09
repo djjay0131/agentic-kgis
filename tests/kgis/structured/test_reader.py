@@ -46,6 +46,19 @@ def test_locator_carries_the_snapshot_version_by_default() -> None:
         assert record.coordinates.locator == reader.locator
 
 
+def test_coordinates_carry_the_snapshot_version_as_source_version() -> None:
+    reader = _reader(make_players_db())
+    for record in reader.read():
+        assert record.coordinates.source_version == reader.snapshot_version
+
+
+def test_source_version_is_stamped_even_when_locator_excludes_snapshot() -> None:
+    reader = _reader(make_players_db(), include_snapshot_in_locator=False)
+    record = next(iter(reader.read()))
+    assert record.coordinates.locator == "sqlite://players"
+    assert record.coordinates.source_version == reader.snapshot_version
+
+
 def test_snapshot_can_be_excluded_from_the_locator() -> None:
     reader = _reader(make_players_db(), include_snapshot_in_locator=False)
     assert reader.locator == "sqlite://players"
