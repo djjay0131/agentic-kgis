@@ -4,7 +4,10 @@ All notable changes to `agentic-kgis` (and the `kg_contracts` / `kg_eval`
 packages it ships). Versions follow semver; `kg_contracts.CONTRACT_VERSION`
 is versioned separately and noted per release.
 
-## Unreleased
+## 0.6.0 — 2026-10-09
+
+Completes the KGIS side of ADR-0028 (KGPS U3). The KGCS half shipped in
+agentic-kgcs#58.
 
 `kg_contracts` CONTRACT_VERSION: **2.2.0 → 2.3.0** (additive, backward
 compatible). Consumers validating contract versions exactly should accept
@@ -23,7 +26,7 @@ compatible minors (agentic-kgcs ADR-0024).
   replaced_by=None)` (and `MemoryGraphStore`) carry the pointer through the
   atomic retire primitive; `GraphMutationStoreContract` pins the round trip and
   the memory store's id index stays in lockstep. Companion KGCS planner/evolution
-  change tracked separately.
+  change: agentic-kgcs#58.
 
 ## 0.5.0 — 2026-10-09
 
