@@ -12,6 +12,7 @@ from kg_contracts.evidence import (
     EvidenceRef,
     EvidenceRelationship,
     Provenance,
+    TextSpan,
     present_evidence,
 )
 from kg_contracts.testing.factories import make_entity_candidate
@@ -87,6 +88,35 @@ def _present(
             content=content,
             payload_hash=payload_hash,
             provenance=PROV,
+        )
+    )
+
+
+def _present_quote_only(
+    registry: SqliteEvidenceRegistry,
+    evidence_id: str,
+    *,
+    quote: str,
+    start: int,
+    end: int,
+    payload_hash: str | None = "ph:quote",
+) -> None:
+    """A PRESENT row whose only inline text is `span.quote` (its content is gone).
+
+    This is the shape #67's review flagged: `content` is already `None`, so a
+    redactor that only nulled `content` would leave the verified quote readable
+    inside `span.quote` in `evidence_json` (ADR candidate 0011).
+    """
+    registry.put(
+        present_evidence(
+            evidence_id=evidence_id,
+            source_type="document",
+            source_locator=f"doc#{evidence_id}",
+            observed_at=NOW,
+            content=None,
+            payload_hash=payload_hash,
+            provenance=PROV,
+            span=TextSpan(start=start, end=end, quote=quote),
         )
     )
 
@@ -331,6 +361,89 @@ def test_redaction_derives_a_hash_when_none_was_recorded() -> None:
     assert evidence.content is None
     assert evidence.payload_hash is not None
     assert evidence.availability is EvidenceAvailability.PRESENT
+
+
+@pytest.mark.parametrize("shared", [True, False])
+def test_erase_redacts_a_quote_only_row_keeping_offsets(shared: bool) -> None:
+    """A quote-only row is redacted too: `span.quote` cleared, offsets kept.
+
+    The row's `content` is already `None`; the verified quote lives only in
+    `span.quote`, so it must be cleared without disturbing the typed span's
+    `start`/`end` (a redactor that only nulled `content` would leak it).
+    """
+    ledger, registry = _make_stores(shared)
+    candidate = make_entity_candidate(key="erase/quote-only")
+    ledger.submit([candidate])
+    _present_quote_only(
+        registry, "ev_quote_only", quote="Ada is a shortstop", start=4, end=23
+    )
+    _cite(registry, candidate.candidate_id, "ev_quote_only")
+
+    report = ErasureCoordinator(ledger, registry).erase(
+        candidate.candidate_id, reason="gdpr", actor="dpo"
+    )
+
+    assert report.redacted == ("ev_quote_only",)
+    stored = registry.get("ev_quote_only")
+    assert stored is not None
+    assert stored.content is None                            # still absent
+    assert stored.span is not None
+    assert stored.span.quote is None                         # quote gone
+    assert (stored.span.start, stored.span.end) == (4, 23)   # offsets kept
+    assert stored.availability is EvidenceAvailability.PRESENT
+    assert stored.payload_hash == "ph:quote"                 # hash retained
+
+    marker = registry.redaction("ev_quote_only")
+    assert marker is not None and marker[0] is not None      # redacted_at set
+    assert marker[1] == "gdpr"
+
+
+@pytest.mark.parametrize("method", ["put", "put_many"])
+def test_requoting_a_redacted_quote_only_row_is_a_noop(method: str) -> None:
+    """Re-`put`ting a redacted quote-only id keeps it redacted (terminal no-op)."""
+    ledger, registry = _make_stores(False)
+    candidate = make_entity_candidate(key="erase/quote-only/reingest")
+    ledger.submit([candidate])
+    _present_quote_only(
+        registry, "ev_quote_reingest", quote="Ada is a shortstop", start=4, end=23
+    )
+    _cite(registry, candidate.candidate_id, "ev_quote_reingest")
+
+    ErasureCoordinator(ledger, registry).erase(
+        candidate.candidate_id, reason="gdpr", actor="dpo"
+    )
+    assert registry.get("ev_quote_reingest").span.quote is None
+    marker_before = registry.redaction("ev_quote_reingest")
+    assert marker_before is not None and marker_before[0] is not None
+
+    # Re-collect the *same* deterministic id with the quote text restored; the
+    # redaction is terminal, so neither the content nor the quote comes back.
+    if method == "put":
+        _present_quote_only(
+            registry, "ev_quote_reingest", quote="Ada is a shortstop", start=4, end=23
+        )
+    else:
+        registry.put_many(
+            [
+                present_evidence(
+                    evidence_id="ev_quote_reingest",
+                    source_type="document",
+                    source_locator="doc#ev_quote_reingest",
+                    observed_at=NOW,
+                    content=None,
+                    payload_hash="ph:quote",
+                    provenance=PROV,
+                    span=TextSpan(start=4, end=23, quote="Ada is a shortstop"),
+                )
+            ]
+        )
+
+    after = registry.get("ev_quote_reingest")
+    assert after is not None
+    assert after.content is None
+    assert after.span is not None and after.span.quote is None   # never restored
+    assert (after.span.start, after.span.end) == (4, 23)
+    assert registry.redaction("ev_quote_reingest") == marker_before
 
 
 @pytest.mark.parametrize("method", ["put", "put_many"])
