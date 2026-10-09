@@ -4,6 +4,15 @@ All notable changes to `agentic-kgis` (and the `kg_contracts` / `kg_eval`
 packages it ships). Versions follow semver; `kg_contracts.CONTRACT_VERSION`
 is versioned separately and noted per release.
 
+## Unreleased
+
+### Tests
+- **Quote-only evidence redaction (#67 follow-up).** Unit coverage for
+  `SqliteEvidenceRegistry._redact_evidence_stmt` / `ErasureCoordinator`: a
+  quote-only row (its `content` already `None`, `span.quote` set) is redacted
+  with `span.quote` cleared and the span offsets kept, and re-putting the same
+  deterministic evidence id afterwards stays redacted (terminal no-op).
+
 ## 0.6.0 — 2026-10-09
 
 Completes the KGIS side of ADR-0028 (KGPS U3). The KGCS half shipped in
