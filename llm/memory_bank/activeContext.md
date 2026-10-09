@@ -1,6 +1,6 @@
 # Active Context — agentic-kgis
 
-Update 2026-10-09: **provenance read ports KGPS needs** (issue #59, ADR-0028
+Update 2026-10-09: **provenance read ports KGPS needs** (issue #59, ADR-0029
 Proposed; no version change — release is separate). The 2026-10-07 KGPS
 (PA-AKG) provenance audit needed two reads KGIS lacked.
 

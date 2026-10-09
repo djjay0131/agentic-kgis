@@ -1,4 +1,4 @@
-# ADR-0028: A second canonical read key — `GraphReader.get_assertion` and the evidence reverse index
+# ADR-0029: A second canonical read key — `GraphReader.get_assertion` and the evidence reverse index
 
 Status: Proposed
 Date: 2026-10-09
@@ -57,7 +57,14 @@ scan. Consumers check it before preferring `get_assertion` over building an
 index by scanning. The field defaults `False`, so the addition is backward
 compatible for every existing adapter construction. `MemoryGraphStore`
 declares it `True` and backs `get_assertion` with an `assertion_id -> Assertion`
-index kept in lockstep with the subject-keyed store.
+index kept in lockstep with the subject-keyed store. The two indexes must not
+diverge, so `apply` rejects an `ATTACH_ASSERTION` whose `assertion_id` already
+exists (in the store or earlier in the same batch) as a loud non-commit naming
+the id, rather than appending a second subject-keyed entry the id index cannot
+address. The matching invariant for the unimplemented `RETRACT_ASSERTION`
+(named in code and pinned by a test): any future operation that removes or
+reassigns an assertion must delete from the id index alongside the
+subject-keyed list.
 
 ### 3. `SqliteEvidenceRegistry.subjects_for(evidence_id, relationship=None) -> list[str]`
 
@@ -85,6 +92,37 @@ relationships.
 `agentic-kg`'s `Neo4jCanonicalGraphStore` must implement `get_assertion`
 (the same way it adopted `RESTORE_IDENTITY`, ADR-0027). Listed as a
 follow-up, not done here.
+
+### 6. The `runtime_checkable` protocol-widening hazard
+
+`GraphReader` is `@runtime_checkable`. A runtime-checkable `Protocol`
+satisfies `isinstance()` on **method presence alone** — it does not check
+signatures and it has no structural default. Adding `get_assertion` to
+`GraphReader` therefore silently *narrows* which objects satisfy
+`isinstance(store, GraphReader)`: any store that implemented the old
+protocol and has not yet added the new method stops counting as a
+`GraphReader`, even though nothing about its reads regressed.
+
+That is not hypothetical here. `agentic-kgcs`'s executor
+(`src/kgcs/executor/executor.py`, ~L243) gates its snapshot preconditions on
+`isinstance(store, GraphReader)`. A third-party store lacking `get_assertion`
+would silently stop matching, so the executor would **skip its snapshot
+preconditions** rather than fail — a read-compatibility addition producing a
+quiet write-safety regression. The failure is invisible: no exception, no
+log line, just fewer guards.
+
+Consequence recorded: every store type-checked against `GraphReader` must
+add `get_assertion` when it adopts this contract — the method is not
+optional even for an adapter that never serves `explain(assertion_id)`
+directly (it may scan or raise `UnsupportedCapabilityError` internally, but
+the name must be present). Mitigation adopted here: **adapters must
+implement it**, and the published conformance suite plus the cross-repo
+`agentic-kg` follow-up (above) force it loudly. A structural default (a
+`GraphReader` mixin supplying a scanning `get_assertion`, so an adapter
+cannot fall out of the protocol by omission) is noted as a **possible
+future mitigation** if third-party stores prove slow to adopt; it is not
+introduced here because it would turn a missing index into a silent
+O(graph) scan, which is the cost this ADR exists to remove.
 
 ## Rationale
 
@@ -166,6 +204,13 @@ mandate.
 - `agentic-kg`'s `Neo4jCanonicalGraphStore` must adopt `get_assertion`; until
   it does it lacks the method and would fail the suite. Listed as a
   follow-up, not done here.
+- The `runtime_checkable` protocol widening (Decision §6): a store that
+  implements `GraphReader` without `get_assertion` silently stops satisfying
+  `isinstance(store, GraphReader)`. The known consumer is `agentic-kgcs`'s
+  executor, which gates snapshot preconditions on that check, so the
+  regression is a silent skip of a guard, not a loud error. Mitigated by
+  requiring every adapter to implement the method; a scanning mixin default
+  is a deferred option.
 - The evidence reverse lookup sees only citations registered through
   `add_refs` (and its non-committing variant), the same scope limit the
   orphan check documents (ADR candidate 0010). A citation carried only inside
