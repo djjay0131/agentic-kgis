@@ -250,6 +250,7 @@ class MemoryGraphStore:
         # identity" because the target is not yet in `self._entities`.
         staged_entities: dict[str, CanonicalEntity] = {}
         new_assertions: list[Assertion] = []
+        staged_assertion_ids: set[str] = set()
         touched_subjects: list[str] = []
         for operation in batch.operations:
             if operation.type is CurationOperationType.CREATE_IDENTITY:
@@ -262,6 +263,27 @@ class MemoryGraphStore:
                 assertion = Assertion.model_validate(
                     {**operation.payload, "curation_epoch": new_epoch}
                 )
+                # `assertion_id` is the id index's key, and the two indexes
+                # must not diverge: a duplicate id would append a second entry
+                # to the subject-keyed `_assertions` list while
+                # `_assertions_by_id` kept only the last, so `assertions_for`
+                # and `get_assertion` would disagree on the same id (issue #59
+                # review). Reject rather than silently corrupt the pair, and
+                # check the staged batch too so a single batch that attaches
+                # the same id twice fails atomically before any mutation.
+                if (
+                    assertion.assertion_id in self._assertions_by_id
+                    or assertion.assertion_id in staged_assertion_ids
+                ):
+                    return CommitResult(
+                        batch_id=batch.batch_id,
+                        committed=False,
+                        error=(
+                            "ATTACH_ASSERTION duplicates an existing assertion_id: "
+                            f"{assertion.assertion_id!r}"
+                        ),
+                    )
+                staged_assertion_ids.add(assertion.assertion_id)
                 new_assertions.append(assertion)
                 touched_subjects.append(assertion.subject_identity)
             elif operation.type is CurationOperationType.REVOKE_IDENTITY:
@@ -352,6 +374,15 @@ class MemoryGraphStore:
                 )
                 touched_subjects.append(identity_id)
             else:
+                # Plan 3. If a future RETRACT_ASSERTION (or any operation that
+                # removes or reassigns an assertion) is implemented here, it
+                # MUST update `_assertions_by_id` in lockstep with `_assertions`
+                # — a retraction that drops the subject-keyed entry but leaves
+                # the id index behind would let `get_assertion` serve an
+                # assertion `assertions_for` no longer returns. The writer
+                # primitives keep the pair in step today (`put_assertion` adds
+                # to both, `mark_superseded` replaces both); a delete needs the
+                # matching index delete. Pinned by the duplicate-id test.
                 raise NotImplementedError(
                     f"{operation.type} is not implemented in Plan 1 (lands in Plan 3)"
                 )
