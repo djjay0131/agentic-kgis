@@ -48,6 +48,7 @@ def test_adapter_capabilities_defaults_all_false_and_frozen():
     assert caps.supports_bulk_upsert is False
     assert caps.supports_snapshot_reads is False
     assert caps.supports_graph_algorithms is False
+    assert caps.supports_assertion_lookup is False
     with pytest.raises(ValidationError):
         caps.supports_transactions = True  # type: ignore[misc]
 
@@ -75,6 +76,11 @@ class _FakeReader:
         self, identity_id: str, options: GraphReadOptions = GraphReadOptions()
     ) -> list[Assertion]:
         return []
+
+    def get_assertion(
+        self, assertion_id: str, options: GraphReadOptions = GraphReadOptions()
+    ) -> Assertion | None:
+        return None
 
     def neighborhood(
         self, identity_id: str, hops: int = 1, options: GraphReadOptions = GraphReadOptions()

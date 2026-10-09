@@ -424,6 +424,95 @@ class GraphMutationStoreContract:
             revoked.assertion_id,
         }
 
+    def test_get_assertion_returns_active_assertion_by_id(self) -> None:
+        # Issue #59: the canonical read surface gains an id-keyed lookup
+        # alongside the identity-keyed `assertions_for`, so a consumer can
+        # resolve one assertion (KGPS `explain(assertion_id)`) without walking
+        # every subject.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        assertion = make_assertion(subject_identity=entity.identity_id, object_value=200)
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(_create_identity_op(entity), _attach_assertion_op(assertion)),
+            ),
+            preconditions=(),
+        )
+
+        fetched = store.get_assertion(assertion.assertion_id)
+        assert fetched is not None
+        assert fetched.assertion_id == assertion.assertion_id
+        assert fetched.subject_identity == entity.identity_id
+        assert fetched.status is CurationStatus.ACTIVE
+
+    def test_get_assertion_hides_superseded_by_default_and_flag_reveals(self) -> None:
+        # The id lookup must apply the same `include_superseded` gate as
+        # `assertions_for`: a single-id read cannot surface history the list
+        # read hides.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        active = make_assertion(subject_identity=entity.identity_id, object_value=200)
+        superseded = make_assertion(
+            subject_identity=entity.identity_id,
+            object_value=195,
+            status=CurationStatus.SUPERSEDED,
+            superseded_at=NOW,
+        )
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(
+                    _create_identity_op(entity),
+                    _attach_assertion_op(active),
+                    _attach_assertion_op(superseded),
+                ),
+            ),
+            preconditions=(),
+        )
+
+        assert store.get_assertion(superseded.assertion_id) is None
+        revealed = store.get_assertion(
+            superseded.assertion_id, options=GraphReadOptions(include_superseded=True)
+        )
+        assert revealed is not None
+        assert revealed.status is CurationStatus.SUPERSEDED
+        # ... and the flag is not a blanket "show everything": the active one is
+        # still returned, but the revoke-shield cross term is separate (below).
+        assert store.get_assertion(active.assertion_id) is not None
+
+    def test_get_assertion_honours_subject_revoke_shield(self) -> None:
+        # ADR-0026: revoking an identity shields its assertions. The id lookup
+        # must honour that shield exactly as `assertions_for` does —
+        # `include_revoked` is the only way to reach an assertion belonging to
+        # a withdrawn subject.
+        store = _as_testable(self.make_store())
+        entity = make_entity()
+        assertion = make_assertion(subject_identity=entity.identity_id, object_value=200)
+        store.apply(
+            GraphMutationBatch(
+                plan_id="pl_1",
+                operations=(_create_identity_op(entity), _attach_assertion_op(assertion)),
+            ),
+            preconditions=(),
+        )
+        store.apply(
+            GraphMutationBatch(plan_id="pl_2", operations=(_revoke_identity_op(entity),)),
+            preconditions=(),
+        )
+
+        assert store.get_assertion(assertion.assertion_id) is None
+        surfaced = store.get_assertion(
+            assertion.assertion_id, options=GraphReadOptions(include_revoked=True)
+        )
+        assert surfaced is not None
+        # The shield is a read rule: the assertion's own status is untouched.
+        assert surfaced.status is CurationStatus.ACTIVE
+
+    def test_get_assertion_unknown_id_returns_none(self) -> None:
+        store = _as_testable(self.make_store())
+        assert store.get_assertion("assertion_does_not_exist") is None
+
     def test_revoke_identity_hides_entity_and_preserves_creation_epoch(self) -> None:
         # ADR-0025, the rollback contract an adapter must honour for a
         # committed curation run to be reversible: REVOKE_IDENTITY removes the
